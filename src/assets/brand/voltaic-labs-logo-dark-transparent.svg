@@ -1,0 +1,7 @@
+<svg width="440" height="120" viewBox="0 0 440 120" xmlns="http://www.w3.org/2000/svg">
+  <title>Voltaic Labs</title>
+  <polygon points="60,10 100,33 100,79 60,102 20,79 20,33" fill="#5DCAA5" stroke="#04342C" stroke-width="1.5"/>
+  <path d="M67 24 L44 62 L57 62 L52 88 L78 48 L64 48 Z" fill="#04342C"/>
+  <text x="122" y="56" font-size="34" font-weight="500" fill="#E1F5EE" font-family="'Helvetica Neue', Arial, sans-serif">Voltaic</text>
+  <text x="122" y="90" font-size="34" font-weight="500" fill="#5DCAA5" font-family="'Helvetica Neue', Arial, sans-serif">Labs</text>
+</svg>
