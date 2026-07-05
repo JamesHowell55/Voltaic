@@ -162,6 +162,40 @@ export const CONVERSION_CATEGORIES: ConversionCategory[] = [
       linearUnit('lbin3', 'Pound/in³ (lb/in³)', 27679.90470923),
     ],
   },
+  {
+    id: 'angularVelocity',
+    label: 'Angular Velocity',
+    units: [
+      linearUnit('rads', 'Radian/second (rad/s)', 1),
+      linearUnit('rpm', 'RPM (rev/min)', 0.10471975511965977),
+      linearUnit('degs', 'Degree/second (°/s)', 0.017453292519943295),
+    ],
+  },
+  {
+    id: 'wireGauge',
+    label: 'Wire Gauge',
+    units: [
+      linearUnit('mm2', 'Cross-section area (mm²)', 1),
+      linearUnit('kcmil', 'Thousand circular mils (kcmil)', 0.5067074790975),
+      {
+        // Standard AWG formula: diameter (in) = 0.005 * 92^((36-AWG)/39).
+        // toBase/fromBase convert AWG <-> cross-sectional area in mm² (not a linear
+        // factor — AWG is logarithmic in diameter).
+        id: 'awg',
+        label: 'AWG',
+        toBase: (awg) => {
+          const diameterIn = 0.005 * Math.pow(92, (36 - awg) / 39);
+          const diameterMm = diameterIn * 25.4;
+          return (Math.PI / 4) * diameterMm * diameterMm;
+        },
+        fromBase: (areaMm2) => {
+          const diameterMm = Math.sqrt((4 * areaMm2) / Math.PI);
+          const diameterIn = diameterMm / 25.4;
+          return 36 - 39 * (Math.log(diameterIn / 0.005) / Math.log(92));
+        },
+      },
+    ],
+  },
 ];
 
 export function getCategory(categoryId: string): ConversionCategory | undefined {
