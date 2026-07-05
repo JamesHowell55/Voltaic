@@ -19,6 +19,9 @@ export default function NavBar() {
         <NavLink to="/creepage-clearance" className={({ isActive }) => (isActive ? 'active' : '')}>
           Creepage &amp; Clearance
         </NavLink>
+        <NavLink to="/bolted-joint" className={({ isActive }) => (isActive ? 'active' : '')}>
+          Bolted Joint
+        </NavLink>
         <ThemeControls />
       </nav>
     </header>

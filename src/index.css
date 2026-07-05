@@ -527,6 +527,68 @@ button.btn.small { padding: 0.32rem 0.6rem; font-size: 0.74rem; }
   border: 1px solid var(--accent-border);
 }
 
+/* ── Info tooltips ──────────────────────────────────────────── */
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  margin-left: 0.4rem;
+}
+
+.info-tip-trigger {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border-hover);
+  background: var(--bg-input);
+  color: var(--text-3);
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: help;
+}
+
+.info-tip-trigger:hover,
+.info-tip-trigger:focus-visible {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.info-tip-bubble {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 260px;
+  max-width: 70vw;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-float);
+  padding: 0.7rem 0.85rem;
+  font-size: 0.76rem;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text-2);
+  text-transform: none;
+  letter-spacing: normal;
+  visibility: hidden;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.12s var(--ease-out), transform 0.12s var(--ease-out);
+  pointer-events: none;
+}
+
+.info-tip:hover .info-tip-bubble,
+.info-tip:focus-within .info-tip-bubble {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+}
+
 /* ── Home page ──────────────────────────────────────────────── */
 .tool-grid {
   display: grid;

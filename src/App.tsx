@@ -4,6 +4,7 @@ import NavBar from './components/NavBar';
 import Home from './pages/Home';
 import BusbarCalculator from './pages/BusbarCalculator';
 import CreepageClearanceCalculator from './pages/CreepageClearanceCalculator';
+import BoltedJointCalculator from './pages/BoltedJointCalculator';
 import { ThemeProvider } from './lib/ThemeContext';
 
 function App() {
@@ -26,6 +27,7 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/busbar" element={<BusbarCalculator />} />
           <Route path="/creepage-clearance" element={<CreepageClearanceCalculator />} />
+          <Route path="/bolted-joint" element={<BoltedJointCalculator />} />
         </Routes>
         <footer className="site-footer">
           Engineering estimation tool — verify critical designs against the referenced standards and, where required, physical testing.

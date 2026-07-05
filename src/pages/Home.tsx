@@ -34,6 +34,17 @@ export default function Home() {
           <span className="tag">Available</span>
         </Link>
 
+        <Link to="/bolted-joint" className="tool-card available">
+          <div className="icon">⛭</div>
+          <h3>Bolted Joint Calculator</h3>
+          <p>
+            Metric and imperial fastener stack-ups, washers and locking nuts, tapped or threaded-insert
+            engagement, VDI 2230 cone-of-compression stiffness, bidirectional preload ↔ torque, and
+            fastener/clamped-member yield checks.
+          </p>
+          <span className="tag">Available</span>
+        </Link>
+
         <div className="tool-card">
           <div className="icon">⚡</div>
           <h3>Fault Level Calculator</h3>
