@@ -1,4 +1,43 @@
 import { Link } from 'react-router-dom';
+import { NAV_CATEGORIES, CONVERSIONS_LINK, type CalculatorLink } from '../lib/navCategories';
+
+const ICONS: Record<string, string> = {
+  '/busbar': '⌁',
+  '/cable-voltage-drop': '⚡',
+  '/capacitor-sizing': '⎓',
+  '/creepage-clearance': '⏚',
+  '/harness-bundle-diameter': '⌇',
+  '/wire-sizing': '〰',
+  '/bolted-joint': '⛭',
+  '/dynamics': '⚙',
+  '/orings': '⭕',
+  '/conductive-heat-transfer': '♨',
+  '/pressure-drop': '⇓',
+  '/material-database': '⬡',
+  '/conversions': '⇄',
+};
+
+function ToolCard({ link }: { link: CalculatorLink }) {
+  const icon = ICONS[link.path] ?? '●';
+  if (!link.available) {
+    return (
+      <div className="tool-card">
+        <div className="icon">{icon}</div>
+        <h3>{link.label}</h3>
+        <p>{link.description}</p>
+        <span className="tag">Coming soon</span>
+      </div>
+    );
+  }
+  return (
+    <Link to={link.path} className="tool-card available">
+      <div className="icon">{icon}</div>
+      <h3>{link.label}</h3>
+      <p>{link.description}</p>
+      <span className="tag">Available</span>
+    </Link>
+  );
+}
 
 export default function Home() {
   return (
@@ -7,49 +46,26 @@ export default function Home() {
         <div className="eyebrow">● First-principles engineering tools</div>
         <h1>Engineering Calculators</h1>
         <p>
-          A growing set of calculators for electrical and mechanical first-principles design work —
+          A growing set of calculators for electrical, mechanical, thermal and material design work —
           transparent formulas, standards-referenced, every step shown.
         </p>
       </div>
 
-      <div className="tool-grid">
-        <Link to="/busbar" className="tool-card available">
-          <div className="icon">⌁</div>
-          <h3>Busbar Calculator</h3>
-          <p>
-            Build a busbar cross-section from multiple bar sections, apply AC or DC current,
-            duration, ambient temperature and material, and calculate steady-state or
-            short-circuit conductor temperature.
-          </p>
-          <span className="tag">Available</span>
-        </Link>
+      {NAV_CATEGORIES.map((category) => (
+        <div key={category.label} style={{ marginBottom: '2rem' }}>
+          <h2 style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>{category.label}</h2>
+          <div className="tool-grid">
+            {category.links.map((link) => (
+              <ToolCard key={link.path} link={link} />
+            ))}
+          </div>
+        </div>
+      ))}
 
-        <Link to="/creepage-clearance" className="tool-card available">
-          <div className="icon">⏚</div>
-          <h3>Creepage &amp; Clearance Calculator</h3>
-          <p>
-            Minimum creepage and clearance distances per IEC 60664-1 — pollution degree, material group (CTI),
-            overvoltage category, and altitude correction from sea level up to 50,000 ft.
-          </p>
-          <span className="tag">Available</span>
-        </Link>
-
-        <Link to="/bolted-joint" className="tool-card available">
-          <div className="icon">⛭</div>
-          <h3>Bolted Joint Calculator</h3>
-          <p>
-            Metric and imperial fastener stack-ups, washers and locking nuts, tapped or threaded-insert
-            engagement, VDI 2230 cone-of-compression stiffness, bidirectional preload ↔ torque, and
-            fastener/clamped-member yield checks.
-          </p>
-          <span className="tag">Available</span>
-        </Link>
-
-        <div className="tool-card">
-          <div className="icon">⚡</div>
-          <h3>Fault Level Calculator</h3>
-          <p>Short-circuit level calculation from source impedance and network data.</p>
-          <span className="tag">Coming soon</span>
+      <div>
+        <h2 style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>Conversions</h2>
+        <div className="tool-grid">
+          <ToolCard link={CONVERSIONS_LINK} />
         </div>
       </div>
     </div>

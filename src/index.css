@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════
-   Voltaic Labs — Engineering Calculators — Design System
-   Dark technical UI. Accent: teal (#5DCAA5), per the Voltaic Labs
+   Voltaic — Engineering Calculators — Design System
+   Dark technical UI. Accent: teal (#5DCAA5), per the Voltaic
    brand palette — used sparingly for the mark, links and primary CTAs.
 ═══════════════════════════════════════════════════════════════ */
 
@@ -193,6 +193,124 @@ h1, h2, h3 { font-weight: 700; letter-spacing: -0.01em; }
   transition: all 0.15s var(--ease-out);
 }
 .navbar-theme-btn:hover { color: var(--navbar-text-hover); border-color: var(--navbar-text-hover); }
+
+/* ── Nav dropdowns (category menus) ─────────────────────────── */
+.nav-dropdown { position: relative; }
+
+.nav-dropdown-trigger {
+  background: transparent;
+  border: none;
+  color: var(--navbar-text);
+  font-size: 0.88rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  transition: color 0.15s var(--ease-out);
+}
+.nav-dropdown-trigger:hover, .nav-dropdown-trigger.active { color: var(--navbar-text-hover); }
+.nav-dropdown-caret { font-size: 0.7rem; }
+
+.nav-dropdown-panel {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 220px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-float);
+  padding: 0.5rem;
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-dropdown-link {
+  display: flex;
+  align-items: center;
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 500;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s var(--ease-out), color 0.15s var(--ease-out);
+}
+.nav-dropdown-link:hover, .nav-dropdown-link.active { background: var(--accent-glow); color: var(--accent); }
+
+/* ── Mobile nav ──────────────────────────────────────────────── */
+.navbar-mobile-toggle {
+  display: none;
+  background: transparent;
+  border: 1px solid var(--navbar-border);
+  color: var(--navbar-text);
+  border-radius: var(--radius-sm);
+  width: 40px;
+  height: 36px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+/* position: absolute (not fixed) because .navbar's backdrop-filter establishes a
+   containing block for fixed descendants, which collapsed this panel's height to
+   zero — absolute relative to .navbar (position: sticky) works correctly instead. */
+.navbar-mobile-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  background: var(--bg);
+  border-top: 1px solid var(--navbar-border);
+  overflow-y: auto;
+  z-index: 400;
+  display: flex;
+  flex-direction: column;
+  padding: 1rem 1.25rem 2rem;
+}
+
+.navbar-mobile-panel > a {
+  color: var(--navbar-text);
+  text-decoration: none;
+  font-size: 1rem;
+  font-weight: 600;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--navbar-border);
+}
+.navbar-mobile-panel > a.active { color: var(--navbar-text-hover); }
+
+.navbar-mobile-group { border-bottom: 1px solid var(--navbar-border); padding: 0.75rem 0; }
+.navbar-mobile-group-label {
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+}
+.navbar-mobile-group a {
+  display: flex;
+  align-items: center;
+  color: var(--navbar-text);
+  text-decoration: none;
+  font-size: 0.92rem;
+  font-weight: 500;
+  padding: 0.55rem 0;
+}
+.navbar-mobile-group a.active { color: var(--navbar-text-hover); }
+
+.navbar-mobile-theme { margin-top: 1rem; }
+
+@media (max-width: 900px) {
+  .navbar-nav-desktop { display: none; }
+  .navbar-mobile-toggle { display: block; }
+  .navbar-brand .brand-sub { display: none; }
+}
 
 /* ── Layout ─────────────────────────────────────────────────── */
 .page {

@@ -5,7 +5,12 @@ import Home from './pages/Home';
 import BusbarCalculator from './pages/BusbarCalculator';
 import CreepageClearanceCalculator from './pages/CreepageClearanceCalculator';
 import BoltedJointCalculator from './pages/BoltedJointCalculator';
+import ConversionsCalculator from './pages/ConversionsCalculator';
+import ComingSoonCalculator from './pages/ComingSoonCalculator';
 import { ThemeProvider } from './lib/ThemeContext';
+import { NAV_CATEGORIES } from './lib/navCategories';
+
+const placeholderLinks = NAV_CATEGORIES.flatMap((c) => c.links).filter((l) => !l.available);
 
 function App() {
   useEffect(() => {
@@ -28,6 +33,10 @@ function App() {
           <Route path="/busbar" element={<BusbarCalculator />} />
           <Route path="/creepage-clearance" element={<CreepageClearanceCalculator />} />
           <Route path="/bolted-joint" element={<BoltedJointCalculator />} />
+          <Route path="/conversions" element={<ConversionsCalculator />} />
+          {placeholderLinks.map((link) => (
+            <Route key={link.path} path={link.path} element={<ComingSoonCalculator />} />
+          ))}
         </Routes>
         <footer className="site-footer">
           Engineering estimation tool — verify critical designs against the referenced standards and, where required, physical testing.
