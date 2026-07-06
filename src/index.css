@@ -94,6 +94,15 @@
   color-scheme: light;
 }
 
+/* The navbar's shared rgba(0,0,0,0.85) + blur reads as solid black over the
+   near-black dark-mode page behind it, but lets the light page bleed through
+   in light mode, showing as charcoal rather than true black — go fully opaque
+   here so the logo sits on pure black in both themes. */
+:root[data-theme="light"] .navbar {
+  background: #000000;
+  backdrop-filter: none;
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body, #root { height: 100%; }
