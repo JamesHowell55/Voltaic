@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type CalcStepData } from '../lib/pdfExport';
+import { useBranding } from '../lib/useBranding';
+import PremiumGate from '../components/PremiumGate';
 import InfoTooltip from '../components/InfoTooltip';
 import { MATERIALS, type Material } from '../lib/materials';
 import {
@@ -37,6 +39,7 @@ type SizeUnit = 'mm2' | 'awg';
 
 export default function CableWireSizingCalculator() {
   const { accentHex } = useTheme();
+  const branding = useBranding();
 
   const [mode, setMode] = useState<SolveMode>('ampacity');
   const [materialId, setMaterialId] = useState<'copper' | 'aluminium'>('copper');
@@ -214,6 +217,7 @@ export default function CableWireSizingCalculator() {
       outputSections,
       calculationSteps,
       disclaimer: 'Engineering estimation tool for EV powertrain cable sizing (battery interconnects, battery-to-inverter, inverter-to-motor), not household/building wiring. Ampacity and conductor temperature are computed from first-principles steady-state heat balance (Churchill-Chu horizontal-cylinder convection, IEC 60287-1-1 skin effect), with the insulation temperature class anchored to ISO 6722. Numeric ISO 6722 ampacity tables are not publicly accessible; this tool computes from physics rather than transcribing an unverifiable table. Bundling derating reuses the standard NEC 310.15(B)(3)(a) reference factors as a disclosed approximation, not a first-principles bundle-thermal model. Screening tool only — not a substitute for OEM harness qualification testing.',
+      ...branding,
     });
   };
 
@@ -229,7 +233,9 @@ export default function CableWireSizingCalculator() {
             steady-state heat balance (not a household/building wiring ampacity table).
           </p>
         </div>
-        <button className="btn primary" style={{ whiteSpace: 'nowrap' }} onClick={handleExportPdf}>Export PDF</button>
+        <PremiumGate feature="PDF export">
+          <button className="btn primary" style={{ whiteSpace: 'nowrap' }} onClick={handleExportPdf}>Export PDF</button>
+        </PremiumGate>
       </div>
 
       <div className="two-col">

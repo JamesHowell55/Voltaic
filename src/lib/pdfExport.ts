@@ -26,6 +26,9 @@ export interface ReportSpec {
   outputSections: ReportSection[];
   calculationSteps: CalcStepData[];
   disclaimer: string;
+  // Premium report branding — when present, shown in place of the Voltaic mark.
+  companyName?: string;
+  companyLogoUrl?: string;
 }
 
 export function buildPdfFilename(tabName: string, date: Date = new Date()): string {
@@ -98,10 +101,16 @@ function buildPrintableDom(spec: ReportSpec): HTMLDivElement {
     <div style="padding:28px 32px;">
       <div style="display:flex; justify-content:space-between; align-items:baseline; border-bottom:2px solid ${accent}; padding-bottom:10px; margin-bottom:14px;">
         <div>
-          <div style="font-size:12px; font-weight:700; letter-spacing:0.05em; color:${accent};">VOLTAIC</div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            ${spec.companyLogoUrl ? `<img src="${spec.companyLogoUrl}" style="height:20px; max-width:120px; object-fit:contain;" />` : ''}
+            <div style="font-size:12px; font-weight:700; letter-spacing:0.05em; color:${accent};">${escapeHtml(spec.companyName || 'VOLTAIC')}</div>
+          </div>
           <div style="font-size:16px; font-weight:700; margin-top:2px;">${escapeHtml(spec.pageTitle)}</div>
         </div>
-        <div style="font-size:9.5px; color:#797D74; text-align:right;">Generated ${escapeHtml(timestamp)}</div>
+        <div style="font-size:9.5px; color:#797D74; text-align:right;">
+          Generated ${escapeHtml(timestamp)}
+          ${spec.companyName ? `<div style="margin-top:2px;">via Voltaic</div>` : ''}
+        </div>
       </div>
       ${passBadge}
       <div style="font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; margin:12px 0 6px;">Inputs</div>

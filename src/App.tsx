@@ -8,7 +8,9 @@ import BoltedJointCalculator from './pages/BoltedJointCalculator';
 import CableWireSizingCalculator from './pages/CableWireSizingCalculator';
 import ConversionsCalculator from './pages/ConversionsCalculator';
 import ComingSoonCalculator from './pages/ComingSoonCalculator';
+import AccountPage from './pages/AccountPage';
 import { ThemeProvider } from './lib/ThemeContext';
+import { AuthProvider } from './lib/AuthContext';
 import { NAV_CATEGORIES } from './lib/navCategories';
 
 const placeholderLinks = NAV_CATEGORIES.flatMap((c) => c.links).filter((l) => !l.available);
@@ -27,23 +29,26 @@ function App() {
 
   return (
     <ThemeProvider>
-      <div className="app-shell">
-        <NavBar />
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/busbar" element={<BusbarCalculator />} />
-          <Route path="/creepage-clearance" element={<CreepageClearanceCalculator />} />
-          <Route path="/bolted-joint" element={<BoltedJointCalculator />} />
-          <Route path="/cable-sizing" element={<CableWireSizingCalculator />} />
-          <Route path="/conversions" element={<ConversionsCalculator />} />
-          {placeholderLinks.map((link) => (
-            <Route key={link.path} path={link.path} element={<ComingSoonCalculator />} />
-          ))}
-        </Routes>
-        <footer className="site-footer">
-          Engineering estimation tool — verify critical designs against the referenced standards and, where required, physical testing.
-        </footer>
-      </div>
+      <AuthProvider>
+        <div className="app-shell">
+          <NavBar />
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/busbar" element={<BusbarCalculator />} />
+            <Route path="/creepage-clearance" element={<CreepageClearanceCalculator />} />
+            <Route path="/bolted-joint" element={<BoltedJointCalculator />} />
+            <Route path="/cable-sizing" element={<CableWireSizingCalculator />} />
+            <Route path="/conversions" element={<ConversionsCalculator />} />
+            <Route path="/account" element={<AccountPage />} />
+            {placeholderLinks.map((link) => (
+              <Route key={link.path} path={link.path} element={<ComingSoonCalculator />} />
+            ))}
+          </Routes>
+          <footer className="site-footer">
+            Engineering estimation tool — verify critical designs against the referenced standards and, where required, physical testing.
+          </footer>
+        </div>
+      </AuthProvider>
     </ThemeProvider>
   );
 }

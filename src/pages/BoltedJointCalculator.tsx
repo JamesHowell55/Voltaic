@@ -1,6 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData } from '../lib/pdfExport';
+import { useBranding } from '../lib/useBranding';
+import { useEntitlement } from '../lib/useEntitlement';
+import PremiumGate from '../components/PremiumGate';
 import {
   ALL_SIZES,
   ALL_PROPERTY_CLASSES,
@@ -101,6 +104,8 @@ function WasherOverrideFields({ washer, override, onChange }: { washer: WasherPr
 
 export default function BoltedJointCalculator() {
   const { accentHex } = useTheme();
+  const branding = useBranding();
+  const { isPremium } = useEntitlement();
 
   const [mode, setMode] = useState<SolveMode>('torqueToPreload');
   const [sizeId, setSizeId] = useState('M8');
@@ -145,6 +150,11 @@ export default function BoltedJointCalculator() {
   const [safetyFactorTarget, setSafetyFactorTarget] = useState(1.5);
 
   const [advancedMode, setAdvancedMode] = useState(false);
+  // Safety net: force advancedMode off if entitlement lapses (e.g. a subscription
+  // expires) while the toggle was already on, regardless of stale local state.
+  useEffect(() => {
+    if (!isPremium && advancedMode) setAdvancedMode(false);
+  }, [isPremium, advancedMode]);
   const [headWasherOverride, setHeadWasherOverride] = useState<WasherOverrideState>(EMPTY_WASHER_OVERRIDE);
   const [nutWasherOverride, setNutWasherOverride] = useState<WasherOverrideState>(EMPTY_WASHER_OVERRIDE);
   const [nutTorqueOverride, setNutTorqueOverride] = useState<number | ''>('');
@@ -504,6 +514,7 @@ export default function BoltedJointCalculator() {
       calculationSteps,
       disclaimer:
         'Engineering estimation tool. Method: Shigley\'s closed-form realization of the VDI 2230 cone-of-compression (frustum) method and torque-preload relationship, ISO 898-1 / SAE J429 property classes. Simplified two-cone (or single-cone for tapped joints) stiffness model; bearing stress checked at outer faces only. Selected-component part designations are standard nomenclature for cross-referencing against a supplier catalog, not a live vendor SKU. Verify against the current official standards and, where required, physical testing before certification use.',
+      ...branding,
     });
   };
 
@@ -522,14 +533,20 @@ export default function BoltedJointCalculator() {
             for a plain-language explanation of each input and result.
           </p>
         </div>
-        <button className="btn primary" style={{ whiteSpace: 'nowrap' }} onClick={handleExportPdf}>Export PDF</button>
+        <PremiumGate feature="PDF export">
+          <button className="btn primary" style={{ whiteSpace: 'nowrap' }} onClick={handleExportPdf}>Export PDF</button>
+        </PremiumGate>
       </div>
 
-      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.25rem', fontSize: '0.82rem', color: 'var(--text-2)', fontWeight: 600 }}>
-        <input type="checkbox" checked={advancedMode} onChange={(e) => setAdvancedMode(e.target.checked)} style={{ width: 'auto' }} />
-        Advanced: override component data
-        <InfoTooltip>Every washer, nut/insert, and clamped material below is normally driven by this tool's presets and tables. Turn this on to type in your own values instead — e.g. a manufacturer's datasheet dimensions, a measured Belleville spring rate, or a certified material property — without losing the preset as your starting point.</InfoTooltip>
-      </label>
+      <div style={{ marginBottom: '1.25rem' }}>
+        <PremiumGate feature="Advanced: override component data">
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--text-2)', fontWeight: 600 }}>
+            <input type="checkbox" checked={advancedMode} onChange={(e) => setAdvancedMode(e.target.checked)} style={{ width: 'auto' }} />
+            Advanced: override component data
+            <InfoTooltip>Every washer, nut/insert, and clamped material below is normally driven by this tool's presets and tables. Turn this on to type in your own values instead — e.g. a manufacturer's datasheet dimensions, a measured Belleville spring rate, or a certified material property — without losing the preset as your starting point.</InfoTooltip>
+          </label>
+        </PremiumGate>
+      </div>
 
       <div className="two-col">
         {/* LEFT COLUMN — inputs */}

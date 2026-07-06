@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import PaschenChart from '../components/PaschenChart';
 import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData } from '../lib/pdfExport';
+import { useBranding } from '../lib/useBranding';
+import PremiumGate from '../components/PremiumGate';
 import {
   MATERIAL_GROUP_CTI,
   getRatedImpulseVoltage,
@@ -25,6 +27,7 @@ const FT_PER_M = 3.28084;
 
 export default function CreepageClearanceCalculator() {
   const { accentHex } = useTheme();
+  const branding = useBranding();
   const [un, setUn] = useState(300);
   const [category, setCategory] = useState<OvervoltageCategory | 'custom'>('II');
   const [customUimp, setCustomUimp] = useState(2500);
@@ -180,6 +183,7 @@ export default function CreepageClearanceCalculator() {
       outputSections,
       calculationSteps,
       disclaimer: 'Engineering estimation tool. Standards: IEC 60664-1 (clearance/altitude), IEC 60335-1 (creepage). Verify exact values against the current official IEC 60664-1 text, and any applicable product standard, before certification use.',
+      ...branding,
     });
   };
 
@@ -196,7 +200,9 @@ export default function CreepageClearanceCalculator() {
             below with your numbers substituted in.
           </p>
         </div>
-        <button className="btn primary" style={{ whiteSpace: 'nowrap' }} onClick={handleExportPdf}>Export PDF</button>
+        <PremiumGate feature="PDF export">
+          <button className="btn primary" style={{ whiteSpace: 'nowrap' }} onClick={handleExportPdf}>Export PDF</button>
+        </PremiumGate>
       </div>
 
       <div className="two-col">

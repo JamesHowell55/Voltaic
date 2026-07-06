@@ -4,9 +4,11 @@ import voltaicLogo from '../assets/brand/voltaic-logo.svg';
 import ThemeControls from './ThemeControls';
 import NavDropdown from './NavDropdown';
 import { NAV_CATEGORIES, CONVERSIONS_LINK } from '../lib/navCategories';
+import { useAuth } from '../lib/AuthContext';
 
 export default function NavBar() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { user } = useAuth();
 
   return (
     <header className="navbar">
@@ -24,6 +26,9 @@ export default function NavBar() {
         ))}
         <NavLink to={CONVERSIONS_LINK.path} className={({ isActive }) => (isActive ? 'active' : '')}>
           {CONVERSIONS_LINK.label}
+        </NavLink>
+        <NavLink to="/account" className={({ isActive }) => (isActive ? 'active' : '')}>
+          {user ? 'Account' : 'Log in'}
         </NavLink>
         <ThemeControls />
       </nav>
@@ -50,6 +55,9 @@ export default function NavBar() {
           ))}
           <NavLink to={CONVERSIONS_LINK.path} className={({ isActive }) => (isActive ? 'active' : '')} onClick={() => setMobileOpen(false)}>
             {CONVERSIONS_LINK.label}
+          </NavLink>
+          <NavLink to="/account" className={({ isActive }) => (isActive ? 'active' : '')} onClick={() => setMobileOpen(false)}>
+            {user ? 'Account' : 'Log in'}
           </NavLink>
           <div className="navbar-mobile-theme">
             <ThemeControls />

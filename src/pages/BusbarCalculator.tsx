@@ -1,9 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import BusbarCrossSection from '../components/BusbarCrossSection';
 import BusbarLengthProfile from '../components/BusbarLengthProfile';
 import TimeSeriesChart from '../components/TimeSeriesChart';
 import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData } from '../lib/pdfExport';
+import { useBranding } from '../lib/useBranding';
+import { useEntitlement } from '../lib/useEntitlement';
+import PremiumGate from '../components/PremiumGate';
 import { MATERIALS, EMISSIVITY_PRESETS, COATING_PRESETS } from '../lib/materials';
 import {
   buildSingleBusbarNodes,
@@ -44,6 +47,9 @@ function fmt(n: number, digits = 2): string {
 
 export default function BusbarCalculator() {
   const { accentHex } = useTheme();
+  const branding = useBranding();
+  const { isPremium, loading: entitlementLoading } = useEntitlement();
+  const FREE_SECTION_LIMIT = 2;
   const [busbarType, setBusbarType] = useState<BusbarType>('single');
 
   // Single-mode: lengthwise sections with a common thickness
@@ -106,8 +112,18 @@ export default function BusbarCalculator() {
   const updateSection = (id: string, patch: Partial<SingleSectionInput>) => {
     setSections(prev => prev.map(s => (s.id === id ? { ...s, ...patch } : s)));
   };
-  const addSection = () => setSections(prev => (prev.length >= 10 ? prev : [...prev, newSection(100, 300)]));
+  const maxSections = isPremium ? 10 : FREE_SECTION_LIMIT;
+  const addSection = () => setSections(prev => (prev.length >= maxSections ? prev : [...prev, newSection(100, 300)]));
   const removeSection = (id: string) => setSections(prev => (prev.length > 1 ? prev.filter(s => s.id !== id) : prev));
+
+  // Safety net: trim back to the free limit / bail out of Load profile mode if
+  // entitlement lapses mid-session (state doesn't persist across a reload, so
+  // this mainly guards a real-time downgrade during an active session).
+  useEffect(() => {
+    if (entitlementLoading || isPremium) return;
+    setSections(prev => (prev.length > FREE_SECTION_LIMIT ? prev.slice(0, FREE_SECTION_LIMIT) : prev));
+    setDurationMode(prev => (prev === 'profile' ? 'continuous' : prev));
+  }, [isPremium, entitlementLoading]);
 
   const updateStep = (id: string, patch: Partial<LoadStep>) => {
     setSteps(prev => prev.map(s => (s.id === id ? { ...s, ...patch } : s)));
@@ -311,6 +327,7 @@ export default function BusbarCalculator() {
       outputSections,
       calculationSteps,
       disclaimer: 'Engineering estimation tool. Formulas: IEC 60287-1-1 (skin effect), IEC 60865-1 (short-circuit heating), generalised-fin nodal thermal network. Verify critical designs against the referenced standards and, where required, physical testing.',
+      ...branding,
     });
   };
 
@@ -326,7 +343,9 @@ export default function BusbarCalculator() {
             or a multi-step drive-cycle profile. Every formula used is shown below with your numbers substituted in.
           </p>
         </div>
-        <button className="btn primary" style={{ whiteSpace: 'nowrap' }} onClick={handleExportPdf}>Export PDF</button>
+        <PremiumGate feature="PDF export">
+          <button className="btn primary" style={{ whiteSpace: 'nowrap' }} onClick={handleExportPdf}>Export PDF</button>
+        </PremiumGate>
       </div>
 
       <div className="two-col">
@@ -343,7 +362,7 @@ export default function BusbarCalculator() {
               </div>
               <span className="hint">
                 {busbarType === 'single'
-                  ? 'One conductor made of up to 10 lengthwise sections of different width, sharing a common thickness — heat conducts between adjoining sections.'
+                  ? `One conductor made of up to ${isPremium ? '10' : '2 (Premium unlocks up to 10)'} lengthwise sections of different width, sharing a common thickness — heat conducts between adjoining sections.`
                   : 'Several identical bars in parallel, sharing one profile and spacing.'}
               </span>
             </div>
@@ -352,7 +371,13 @@ export default function BusbarCalculator() {
               <>
                 <div className="card-title" style={{ marginBottom: '0.5rem' }}>
                   <span style={{ fontWeight: 400 }}>Sections</span>
-                  <button className="btn small" onClick={addSection} disabled={sections.length >= 10}>+ Add section</button>
+                  {!isPremium && sections.length >= FREE_SECTION_LIMIT ? (
+                    <PremiumGate feature="More than 2 sections">
+                      <button className="btn small" onClick={addSection}>+ Add section</button>
+                    </PremiumGate>
+                  ) : (
+                    <button className="btn small" onClick={addSection} disabled={sections.length >= maxSections}>+ Add section</button>
+                  )}
                 </div>
                 {sections.map((s, i) => (
                   <div className="step-row" key={s.id}>
@@ -545,7 +570,9 @@ export default function BusbarCalculator() {
                 <div className="segmented">
                   <button className={durationMode === 'continuous' ? 'active' : ''} onClick={() => setDurationMode('continuous')}>Continuous</button>
                   <button className={durationMode === 'fault' ? 'active' : ''} onClick={() => setDurationMode('fault')}>Short-time / fault</button>
-                  <button className={durationMode === 'profile' ? 'active' : ''} onClick={() => setDurationMode('profile')}>Load profile</button>
+                  <PremiumGate feature="Load profile mode">
+                    <button className={durationMode === 'profile' ? 'active' : ''} onClick={() => setDurationMode('profile')}>Load profile</button>
+                  </PremiumGate>
                 </div>
               </div>
             </div>
