@@ -21,6 +21,7 @@ const PATH_ICON_OVERRIDES: Record<string, string> = {
   '/bolted-joint': '⛭',
   '/cable-sizing': '⏛',
   '/battery-pack-series-parallel': '⫴',
+  '/speed-torque-power': 'Ω',
   '/conversions': '⇄',
 };
 
