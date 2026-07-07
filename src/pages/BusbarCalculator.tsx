@@ -754,7 +754,7 @@ export default function BusbarCalculator() {
             {durationMode === 'profile' && (
               <div style={{ marginTop: '0.85rem' }}>
                 <div className="card-title" style={{ marginBottom: '0.5rem' }}>
-                  <span style={{ fontWeight: 400 }}>Load steps (up to 10, simulated in order from ambient)</span>
+                  <span style={{ fontWeight: 400 }}>Load steps (up to 10, simulated in order from the unpowered steady state — ambient, or below it where conduction cooling is applied)</span>
                   <button className="btn small" onClick={addStep} disabled={steps.length >= 10}>+ Add step</button>
                 </div>
                 {steps.map((s, i) => (

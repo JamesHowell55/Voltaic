@@ -446,7 +446,14 @@ export interface TransientResult {
 
 /** Backward-Euler time march of the nodal thermal network through a
  *  sequence of constant-current steps (a "load profile" / drive cycle),
- *  subdividing each step for a smooth, numerically stable curve. */
+ *  subdividing each step for a smooth, numerically stable curve.
+ *
+ *  Initial condition: the ZERO-CURRENT steady state, not ambient. With no
+ *  conduction cooling these are identical (an unpowered bar equilibrates to
+ *  air temperature), but a coldplate-mounted section with coolant already
+ *  flowing sits below ambient before the profile even starts — starting it
+ *  at ambient made cooled sections appear to "never drop below ambient" for
+ *  profiles shorter than a few thermal time constants. */
 export function solveNodalTransient(
   nodes: ThermalNode[], material: Material, currentType: CurrentType, frequencyHz: number,
   ambientC: number, emissivity: number, orientation: Orientation, manualH: number | null,
@@ -458,7 +465,15 @@ export function solveNodalTransient(
   const capacitance = nodes.map(node => material.density * (node.areaMm2 * 1e-6 * node.lengthM) * material.specificHeat);
   const gCoolant = (i: number) => coolantConductancePerNode[i] ?? 0;
 
-  let temps = new Array(n).fill(ambientC);
+  // Without cooling the unpowered steady state is exactly ambient — skip the
+  // solve (and its ±1e-4 K relaxation residual) to keep that case bit-exact.
+  const anyCoolant = coolantConductancePerNode.some(g => g > 0);
+  let temps = anyCoolant
+    ? solveNodalSteadyState(
+      nodes, material, 0, currentType, frequencyHz, ambientC, emissivity, orientation, manualH,
+      coatingThicknessMm, coatingConductivity, coolantConductancePerNode, coolantTempC
+    ).tempsC
+    : new Array(n).fill(ambientC);
   const timeS: number[] = [0];
   const currentA: number[] = [steps[0]?.current ?? 0];
   const nodeTempsC: number[][] = nodes.map((_, i) => [temps[i]]);
