@@ -94,9 +94,10 @@ export default function MosfetLossCalculator() {
   const headline: DeviceLossResult = isDuty ? duty.perStep[duty.worstStepIndex] ?? single : single;
   const worstTj = headline.junctionTempC;
   const tjPass = worstTj <= device.tvjMaxC;
+  const thermalRunaway = !headline.converged;
   const devicePeakCurrentA = Math.SQRT2 * (isDuty ? Math.max(...dutySteps.map((s) => s.phaseCurrentArms), 0) : phaseCurrentArms) / Math.max(parallelCount, 1);
   const currentPass = devicePeakCurrentA <= device.currentRatingA * Math.SQRT2; // peak vs DC rating with crest allowance
-  const overallPass = tjPass && currentPass;
+  const overallPass = tjPass && currentPass && !thermalRunaway;
 
   const lossBars: LossBar[] = useMemo(() => {
     const toBar = (r: DeviceLossResult, label: string): LossBar => ({
@@ -512,24 +513,28 @@ export default function MosfetLossCalculator() {
             <div className={`status-banner ${overallPass ? 'pass' : 'fail'}`}>
               {overallPass
                 ? `✓ Tj ${fmt(worstTj, 1)}°C within Tvj(max) ${fmt(device.tvjMaxC, 0)}°C`
-                : `✗ ${!tjPass ? `Tj ${fmt(worstTj, 1)}°C exceeds Tvj(max) ${fmt(device.tvjMaxC, 0)}°C` : `Device peak current ${fmt(devicePeakCurrentA, 0)} A exceeds rating`}`}
+                : thermalRunaway
+                  ? `✗ Thermal runaway — operating point exceeds device capability; Rds(on)/Tj model is invalid beyond Tvj(max) ${fmt(device.tvjMaxC, 0)}°C (last iterated estimate ${fmt(worstTj, 0)}°C is not a real value)`
+                  : `✗ ${!tjPass ? `Tj ${fmt(worstTj, 1)}°C exceeds Tvj(max) ${fmt(device.tvjMaxC, 0)}°C` : `Device peak current ${fmt(devicePeakCurrentA, 0)} A exceeds rating`}`}
             </div>
 
             <div className="result-grid">
               <div className="result-tile">
                 <div className="label">Per-device die loss</div>
-                <div className="value">{fmt(headline.totalDeviceDieW, 1)}<span className="unit">W</span></div>
-                <div className="hint">RDS(on) used: {fmt(headline.rdsOnUsedmOhm, 2)} mΩ</div>
+                <div className="value">{thermalRunaway ? 'N/A' : fmt(headline.totalDeviceDieW, 1)}{!thermalRunaway && <span className="unit">W</span>}</div>
+                <div className="hint">{thermalRunaway ? 'not meaningful — see thermal runaway warning' : `RDS(on) used: ${fmt(headline.rdsOnUsedmOhm, 2)} mΩ`}</div>
               </div>
               <div className="result-tile">
                 <div className="label">Whole-inverter loss</div>
-                <div className="value">{fmt(headline.inverterTotalW, 0)}<span className="unit">W</span></div>
+                <div className="value">{thermalRunaway ? 'N/A' : fmt(headline.inverterTotalW, 0)}{!thermalRunaway && <span className="unit">W</span>}</div>
                 <div className="hint">{inverterStructureLabel(device.topology, parallelCount)}</div>
               </div>
               <div className="result-tile">
                 <div className="label">Junction temperature</div>
-                <div className={`value ${tjPass ? 'pos' : 'neg'}`}>{fmt(worstTj, 1)}<span className="unit">°C</span></div>
-                <div className="hint">case {fmt(caseTempC, 0)}°C, RthJC {fmt(device.rthJcKPerW, 3)} K/W</div>
+                <div className={`value ${tjPass ? 'pos' : 'neg'}`}>
+                  {thermalRunaway ? `>${fmt(2 * device.tvjMaxC, 0)}` : fmt(worstTj, 1)}<span className="unit">°C</span>
+                </div>
+                <div className="hint">{thermalRunaway ? 'thermal runaway — model invalid beyond this point' : `case ${fmt(caseTempC, 0)}°C, RthJC ${fmt(device.rthJcKPerW, 3)} K/W`}</div>
               </div>
               <div className="result-tile">
                 <div className="label">Output power</div>
@@ -562,18 +567,21 @@ export default function MosfetLossCalculator() {
                   <tr><th>Step</th><th>Load</th><th>Loss (W)</th><th>Tj (°C)</th><th>η (%)</th></tr>
                 </thead>
                 <tbody>
-                  {duty.perStep.map((r, i) => (
-                    <tr key={i} style={i === duty.worstStepIndex ? { color: 'var(--warn)' } : undefined}>
-                      <td>{i + 1}{i === duty.worstStepIndex ? ' ★' : ''}</td>
-                      <td>{fmt(dutySteps[i].phaseCurrentArms, 0)} A, m={fmt(dutySteps[i].modulationIndex, 2)}, {dutySteps[i].mode === 'generator' ? 'gen' : 'mot'}</td>
-                      <td>{fmt(r.inverterTotalW, 0)}</td>
-                      <td>{fmt(r.junctionTempC, 1)}</td>
-                      <td>{fmt(r.efficiencyPercent, 2)}</td>
-                    </tr>
-                  ))}
+                  {duty.perStep.map((r, i) => {
+                    const stepRunaway = !r.converged;
+                    return (
+                      <tr key={i} style={i === duty.worstStepIndex ? { color: 'var(--warn)' } : undefined}>
+                        <td>{i + 1}{i === duty.worstStepIndex ? ' ★' : ''}</td>
+                        <td>{fmt(dutySteps[i].phaseCurrentArms, 0)} A, m={fmt(dutySteps[i].modulationIndex, 2)}, {dutySteps[i].mode === 'generator' ? 'gen' : 'mot'}</td>
+                        <td>{stepRunaway ? 'N/A' : fmt(r.inverterTotalW, 0)}</td>
+                        <td className={stepRunaway ? 'fail' : undefined}>{stepRunaway ? `>${fmt(2 * device.tvjMaxC, 0)} ⚠` : fmt(r.junctionTempC, 1)}</td>
+                        <td>{stepRunaway ? 'N/A' : fmt(r.efficiencyPercent, 2)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
-              <span className="hint">★ = worst step by junction temperature. Each step is solved quasi-steady (assumes steps long vs the device thermal time constant).</span>
+              <span className="hint">★ = worst step by junction temperature. Each step is solved quasi-steady (assumes steps long vs the device thermal time constant). ⚠ = thermal runaway — operating point exceeds the device's rated capability, Rds(on)/Tj model invalid beyond Tvj(max).</span>
             </div>
           )}
 

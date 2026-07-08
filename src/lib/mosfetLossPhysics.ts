@@ -132,6 +132,14 @@ export function solveDeviceLosses(device: SicDevicePreset, op: OperatingPoint): 
   let rdsOnOhm = rdsOnAtTempOhm(device.rdsOn25mOhm, device.rdsOnHotmOhm, device.rdsOnHotTempC, tj);
   let converged = false;
 
+  // The linear Rdson(Tj) fit is only anchored by two datasheet points (25°C and the "hot" test
+  // point) — positive feedback between conduction loss and Rdson makes the fixed-point iteration
+  // diverge whenever the loop gain exceeds 1 (operating point well beyond the device's rated
+  // capability). Once Tj is extrapolated to twice the device's own absolute max rating the linear
+  // fit is meaningless, so stop iterating immediately rather than compounding an already-invalid
+  // number for the remaining passes — leaving converged=false as the "out of model range" signal.
+  const runawayCeilingC = 2 * device.tvjMaxC;
+
   for (let i = 0; i < 30; i++) {
     rdsOnOhm = rdsOnAtTempOhm(device.rdsOn25mOhm, device.rdsOnHotmOhm, device.rdsOnHotTempC, tj);
     if (op.syncRect) {
@@ -149,6 +157,7 @@ export function solveDeviceLosses(device: SicDevicePreset, op: OperatingPoint): 
       break;
     }
     tj = tjNext;
+    if (tj > runawayCeilingC) break;
   }
 
   const totalDeviceDieW = conductionChannelW + conductionDiodeW + deadTimeDiodeW + switchingW + reverseRecoveryW;
