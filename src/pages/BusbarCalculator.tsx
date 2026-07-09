@@ -33,6 +33,7 @@ import {
   type DurationMode,
   type BusbarType,
 } from '../lib/busbarPhysics';
+import { skinDepthMm } from '../lib/skinDepthPhysics';
 
 interface StepRow extends LoadStep {
   id: string;
@@ -239,6 +240,11 @@ export default function BusbarCalculator() {
   const rdcRef = dcResistancePerMetre(material, 20, nodes[0]?.areaMm2 || 1);
   const rho20 = resistivityAt(material, 20);
   const skinAt20 = currentType === 'ac' ? skinEffectFactor(rdcRef, frequency) : null;
+  // Classical skin depth (different from the IEC 60287 ks ratio above), at the
+  // conductor's actual operating temperature where available — busbars are
+  // non-magnetic (Cu/Al, µr=1).
+  const skinDepthTempC = worstTempC ?? referenceTempC;
+  const skinDepthAtTempMm = currentType === 'ac' ? skinDepthMm(resistivityAt(material, skinDepthTempC) * 1e6, frequency, 1) : null;
 
   const calculationSteps: CalcStepData[] = useMemo(() => {
     const stepsOut: CalcStepData[] = [
@@ -253,6 +259,15 @@ export default function BusbarCalculator() {
         result: `${material.name}: ρ₂₀ = ${rho20.toExponential(3)} Ω·m, β = ${material.beta}°C`,
       },
     ];
+
+    if (currentType === 'ac' && skinDepthAtTempMm !== null) {
+      stepsOut.push({
+        title: 'Classical skin depth (distinct from the IEC 60287 kₛ ratio above — a material/frequency property, not a conductor-geometry resistance ratio)',
+        formula: 'δ = √(ρ(θ) / (π·f·µ₀·µr)), µr = 1 (Cu/Al are non-magnetic)',
+        substitution: `ρ(${fmt(skinDepthTempC, 0)}°C) at operating temperature, f = ${fmt(frequency, 0)} Hz`,
+        result: isFinite(skinDepthAtTempMm) ? `δ = ${fmt(skinDepthAtTempMm, 2)} mm` : '—',
+      });
+    }
 
     if (durationMode === 'continuous' && steady) {
       stepsOut.push({
@@ -314,7 +329,7 @@ export default function BusbarCalculator() {
     }
 
     return stepsOut;
-  }, [nodes, material, rho20, durationMode, steady, frequency, manualH, coatingThicknessMm, coatingConductivity, adiabatic, faultInitialTempC, faultDurationS, minArea, transient, steps, anySectionCooled, timThicknessMm, timConductivity, metalThicknessMm, metalConductivity, coolantInletTempC, coolantConductancePerNode]);
+  }, [nodes, material, rho20, durationMode, steady, frequency, manualH, coatingThicknessMm, coatingConductivity, adiabatic, faultInitialTempC, faultDurationS, minArea, transient, steps, anySectionCooled, timThicknessMm, timConductivity, metalThicknessMm, metalConductivity, coolantInletTempC, coolantConductancePerNode, currentType, skinDepthAtTempMm, skinDepthTempC]);
 
   const inputSections: ReportSection[] = useMemo(() => {
     const geoRows: ReportRow[] = [{ label: 'Busbar type', value: busbarType === 'single' ? 'Single (sections)' : 'Multiple (stacked bars)' }];
@@ -385,6 +400,9 @@ export default function BusbarCalculator() {
     if (durationMode === 'fault') headline.push({ label: 'Min area for this fault', value: minArea !== null ? `${fmt(minArea, 0)} mm²` : '—' });
     if (durationMode === 'profile' && transient) headline.push({ label: 'Profile duration', value: `${fmt(transient.timeS[transient.timeS.length - 1], 0)} s` });
     headline.push({ label: 'Total busbar loss', value: durationMode === 'continuous' ? (totalLossW !== undefined ? `${fmt(totalLossW, 1)} W` : '—') : (totalEnergyJ !== undefined ? `${fmt(totalEnergyJ / 1000, 2)} kJ` : '—') });
+    if (currentType === 'ac' && skinDepthAtTempMm !== null) {
+      headline.push({ label: 'Skin depth', value: `${isFinite(skinDepthAtTempMm) ? fmt(skinDepthAtTempMm, 2) : '—'} mm (at ${fmt(skinDepthTempC, 0)}°C, ${fmt(frequency, 0)} Hz)` });
+    }
     if (anySectionCooled && durationMode === 'continuous') {
       headline.push({ label: 'Heat rejected via conduction cooling', value: `${fmt(coolantTotalHeatW, 1)} W` });
       headline.push({ label: 'Est. coolant temperature rise', value: `${fmt(coolantTempRiseK, 2)} K (informational, not fed back into the result)` });
@@ -402,7 +420,7 @@ export default function BusbarCalculator() {
       { heading: 'Summary', rows: headline },
       { heading: busbarType === 'single' ? 'Per-section results' : 'Bundle result', rows: nodeRows },
     ];
-  }, [durationMode, worstTempC, referenceTempC, maxCurrent, minArea, transient, totalLossW, totalEnergyJ, nodes, steady, adiabatic, busbarType, anySectionCooled, coolantTotalHeatW, coolantTempRiseK]);
+  }, [durationMode, worstTempC, referenceTempC, maxCurrent, minArea, transient, totalLossW, totalEnergyJ, nodes, steady, adiabatic, busbarType, anySectionCooled, coolantTotalHeatW, coolantTempRiseK, currentType, skinDepthAtTempMm, skinDepthTempC, frequency]);
 
   const handleExportPdf = () => {
     const pdfAccent = deriveAccentOnLight(accentHex);
@@ -933,6 +951,13 @@ export default function BusbarCalculator() {
                 <div className="result-tile">
                   <div className="label">Total busbar loss</div>
                   <div className="value">{fmt(totalEnergyJ / 1000, 2)}<span className="unit">kJ</span></div>
+                </div>
+              )}
+              {currentType === 'ac' && skinDepthAtTempMm !== null && (
+                <div className="result-tile">
+                  <div className="label">Skin depth</div>
+                  <div className="value">{isFinite(skinDepthAtTempMm) ? fmt(skinDepthAtTempMm, 2) : '—'}<span className="unit">mm</span></div>
+                  <div className="hint">at {fmt(skinDepthTempC, 0)}°C, {fmt(frequency, 0)} Hz</div>
                 </div>
               )}
             </div>

@@ -603,3 +603,55 @@ export function renderHarnessSchematicSvg(layout: SchematicLayout, accentColor: 
     ${boxesHtml}
   </svg>`;
 }
+
+/** Round-conductor skin-depth cross-section, matching SkinDepthCrossSection.tsx.
+ *  Only the skin-depth:radius ratio is drawn to scale (see that component for why). */
+export function renderSkinDepthCrossSectionSvg(radiusMm: number, skinDepthMmValue: number, isIllustrative: boolean, accentColor: string): string {
+  const W = 400;
+  const H = 320;
+  const CX = W / 2;
+  const CY = 145;
+  const OUTER_PX = 110;
+
+  const ratio = isFinite(skinDepthMmValue) ? Math.min(Math.max(skinDepthMmValue / Math.max(radiusMm, 1e-9), 0), 1) : 1;
+  const innerPx = OUTER_PX * (1 - ratio);
+  const fillsWholeConductor = ratio >= 1;
+  const radiusLabel = `${radiusMm.toFixed(radiusMm < 10 ? 2 : 1)} mm${isIllustrative ? ' (illustrative)' : ''}`;
+  const skinLabel = isFinite(skinDepthMmValue) ? skinDepthMmValue.toFixed(skinDepthMmValue < 10 ? 3 : 1) : '&#8734;';
+
+  const coreHatch = fillsWholeConductor ? '' : `
+    <defs>
+      <pattern id="pdfSkinCoreHatch" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+        <rect width="6" height="6" fill="${TEXT_2}" opacity="0.08" />
+        <line x1="0" y1="0" x2="0" y2="6" stroke="${TEXT_2}" stroke-width="1.2" opacity="0.35" />
+      </pattern>
+      <marker id="pdfSkinArrowStart" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+        <path d="M5,1 L1,3 L5,5" fill="none" stroke="${accentColor}" stroke-width="1" />
+      </marker>
+      <marker id="pdfSkinArrowEnd" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+        <path d="M1,1 L5,3 L1,5" fill="none" stroke="${accentColor}" stroke-width="1" />
+      </marker>
+    </defs>
+    <circle cx="${CX}" cy="${CY}" r="${innerPx}" fill="url(#pdfSkinCoreHatch)" stroke="${TEXT_2}" stroke-width="1" stroke-dasharray="3 2" />
+    <line x1="${CX + innerPx}" y1="${CY + 4}" x2="${CX + innerPx}" y2="${CY + 28}" stroke="${accentColor}" stroke-width="1" />
+    <line x1="${CX + OUTER_PX}" y1="${CY + 4}" x2="${CX + OUTER_PX}" y2="${CY + 28}" stroke="${accentColor}" stroke-width="1" />
+    <line x1="${CX + innerPx}" y1="${CY + 22}" x2="${CX + OUTER_PX}" y2="${CY + 22}" stroke="${accentColor}" stroke-width="1" marker-start="url(#pdfSkinArrowStart)" marker-end="url(#pdfSkinArrowEnd)" />
+    <text x="${(CX + innerPx + CX + OUTER_PX) / 2}" y="${CY + 40}" text-anchor="middle" font-size="9.5" fill="${accentColor}" font-family="ui-monospace, monospace">&#948; = ${skinLabel} mm</text>`;
+
+  const legend = `
+    <rect x="30" y="260" width="12" height="12" fill="color-mix(in srgb, ${accentColor} 12%, white)" stroke="${accentColor}" stroke-width="1" />
+    <text x="48" y="270" font-size="9.5" fill="${TEXT_2}" font-family="ui-monospace, monospace">Current-carrying region (surface to one skin depth in)</text>
+    ${fillsWholeConductor ? '' : `
+    <rect x="30" y="280" width="12" height="12" fill="url(#pdfSkinCoreHatch)" stroke="${TEXT_2}" stroke-width="1" stroke-dasharray="3 2" />
+    <text x="48" y="290" font-size="9.5" fill="${TEXT_2}" font-family="ui-monospace, monospace">Low-current core</text>`}`;
+
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%">
+    <circle cx="${CX}" cy="${CY}" r="${OUTER_PX}" fill="color-mix(in srgb, ${accentColor} 12%, white)" stroke="${accentColor}" stroke-width="1.5" />
+    ${coreHatch}
+    <line x1="${CX}" y1="${CY}" x2="${CX + OUTER_PX}" y2="${CY}" stroke="${TEXT_2}" stroke-width="1" stroke-dasharray="2 2" />
+    <text x="${CX + OUTER_PX / 2}" y="${CY - 6}" text-anchor="middle" font-size="9.5" fill="${TEXT_2}" font-family="ui-monospace, monospace">r = ${radiusLabel}</text>
+    ${fillsWholeConductor ? `<text x="${CX}" y="${CY + 5}" text-anchor="middle" font-size="9.5" fill="${accentColor}" font-family="ui-monospace, monospace">&#948; &#8805; r &mdash; current fills the conductor</text>` : ''}
+    ${legend}
+    <text x="${W / 2}" y="${H - 10}" text-anchor="middle" font-size="9.5" fill="${TEXT_FAINT}" font-family="ui-monospace, monospace">round conductor, cross-section &middot; only the &#948;:r ratio is to scale</text>
+  </svg>`;
+}

@@ -12,6 +12,7 @@ import ChokeSizingCalculator from './pages/ChokeSizingCalculator';
 import MosfetLossCalculator from './pages/MosfetLossCalculator';
 import BundleDiameterCalculator from './pages/BundleDiameterCalculator';
 import HarnessDesigner from './pages/HarnessDesigner';
+import SkinDepthCalculator from './pages/SkinDepthCalculator';
 import ConversionsCalculator from './pages/ConversionsCalculator';
 import ComingSoonCalculator from './pages/ComingSoonCalculator';
 import AccountPage from './pages/AccountPage';
@@ -50,6 +51,7 @@ function App() {
             <Route path="/mosfet-loss" element={<MosfetLossCalculator />} />
             <Route path="/harness-bundle-diameter" element={<BundleDiameterCalculator />} />
             <Route path="/harness-designer" element={<HarnessDesigner />} />
+            <Route path="/skin-depth" element={<SkinDepthCalculator />} />
             <Route path="/conversions" element={<ConversionsCalculator />} />
             <Route path="/account" element={<AccountPage />} />
             {placeholderLinks.map((link) => (

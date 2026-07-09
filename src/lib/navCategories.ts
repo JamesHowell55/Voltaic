@@ -32,6 +32,7 @@ export const NAV_CATEGORIES: NavCategory[] = [
       { label: 'Creepage and Clearance', path: '/creepage-clearance', available: true, description: 'Minimum creepage and clearance distances per IEC 60664-1 — pollution degree, material group (CTI), overvoltage category, and altitude correction from sea level up to 50,000 ft.' },
       { label: 'Harness Bundle Diameter', path: '/harness-bundle-diameter', available: true, description: 'Wire bundle diameter and cross-section for mixed-gauge, mixed-construction harnesses — aerospace M22759/Spec 55 wire, shielded/twisted-pair/CAN bus, plus overbraid, heat-shrink (RNF-100/RNF-3000/HTAT), and Nomex sleeve coverings, cross-checked against the published Glenair bundle-diameter method.' },
       { label: 'Harness Designer', path: '/harness-designer', available: true, description: 'MIL-DTL-38999 Series III connector selection (shell size, contact size, salt-spray finish, mounting type), per-connector pinout tables across multiple branches, and an auto-generated point-to-point wiring schematic with connector naming, pin numbers, and wire specs.' },
+      { label: 'Skin Depth Calculator', path: '/skin-depth', available: true, description: 'Classical AC skin depth from a conductor material\'s resistivity and relative permeability at a given frequency — direct-entered or derived from motor speed and pole pairs — with an illustrative cross-section graphic.' },
     ],
   },
   {
