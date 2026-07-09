@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import PaschenChart from '../components/PaschenChart';
 import ComparisonGrid from '../components/ComparisonGrid';
 import InfoTooltip from '../components/InfoTooltip';
 import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData, type ReportGridTable } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
+import { useEntitlement } from '../lib/useEntitlement';
 import PremiumGate from '../components/PremiumGate';
 import {
   MATERIAL_GROUP_CTI,
@@ -20,6 +21,17 @@ import {
   type PollutionDegree,
 } from '../lib/creepageClearance';
 import { pressureAtAltitude, breakdownVoltage, minGapForVoltage, paschenMinimum } from '../lib/paschen';
+import {
+  ED332_NETWORK_LABELS,
+  ED332_STEADY_STATE_V,
+  ED332_TRANSIENTS,
+  ED332_ABNORMAL_COMMON_MODE_FRACTION,
+  ED332_DIELECTRIC_WITHSTAND_V,
+  ED332_INSULATION_TEST_V,
+  ED332_INSULATION_MIN_MOHM,
+  ed332MaxAbnormalTransientV,
+  type Ed332NetworkType,
+} from '../lib/ed332';
 
 function fmt(n: number, digits = 2): string {
   if (!isFinite(n)) return '—';
@@ -49,10 +61,23 @@ function buildGridTable(
 export default function CreepageClearanceCalculator() {
   const { accentHex } = useTheme();
   const branding = useBranding();
+  const { isPremium } = useEntitlement();
 
   const [workingVoltage, setWorkingVoltage] = useState(300);
   const [hvToChassisOverride, setHvToChassisOverride] = useState<number | null>(null);
-  const hvToChassis = hvToChassisOverride ?? workingVoltage * 0.5;
+
+  const [ed332Advanced, setEd332Advanced] = useState(false);
+  const [ed332NetworkType, setEd332NetworkType] = useState<Ed332NetworkType>('R');
+  const [ed332UseTransientForClearance, setEd332UseTransientForClearance] = useState(true);
+  const [ed332UseAbnormalCmForChassis, setEd332UseAbnormalCmForChassis] = useState(true);
+
+  // Safety net: force ED-332 advanced mode off if entitlement lapses (e.g. a subscription expires).
+  useEffect(() => {
+    if (!isPremium && ed332Advanced) setEd332Advanced(false);
+  }, [isPremium, ed332Advanced]);
+
+  const hvToChassisDefaultFraction = ed332Advanced && ed332UseAbnormalCmForChassis ? ED332_ABNORMAL_COMMON_MODE_FRACTION : 0.5;
+  const hvToChassis = hvToChassisOverride ?? workingVoltage * hvToChassisDefaultFraction;
 
   const [pollutionDegree, setPollutionDegree] = useState<PollutionDegree>(2);
   const [materialGroup, setMaterialGroup] = useState<MaterialGroup>('IIIb');
@@ -78,6 +103,20 @@ export default function CreepageClearanceCalculator() {
   const clearanceHvResult = useMemo(() => getClearance(hvToChassisForClearanceKV, fieldCondition, pollutionDegree), [hvToChassisForClearanceKV, fieldCondition, pollutionDegree]);
   const clearanceWithMargin = clearanceResult.mm * (1 + safetyFactorPercent / 100);
   const clearanceHvWithMargin = clearanceHvResult.mm * (1 + safetyFactorPercent / 100);
+
+  // ED-332 advanced mode: size clearance from the worst-case abnormal voltage
+  // transient (Table 2-2, 1150 VDC for either network type) instead of the
+  // continuous working voltage — filling the Table F.1 impulse-withstand gap
+  // disclosed above, specifically for ED-332-governed HVDC propulsive systems.
+  const ed332TransientV = ed332MaxAbnormalTransientV(ed332NetworkType);
+  const ed332ClearanceVoltageKV = ed332Advanced && ed332UseTransientForClearance
+    ? (ed332TransientV / 1000) * altCorrection.factor
+    : null;
+  const clearanceEd332Result = useMemo(
+    () => (ed332ClearanceVoltageKV === null ? null : getClearance(ed332ClearanceVoltageKV, fieldCondition, pollutionDegree)),
+    [ed332ClearanceVoltageKV, fieldCondition, pollutionDegree],
+  );
+  const clearanceEd332WithMargin = clearanceEd332Result ? clearanceEd332Result.mm * (1 + safetyFactorPercent / 100) : null;
 
   const creepageResult = useMemo(() => (pollutionDegree === 4 ? null : getCreepage(workingVoltage, pollutionDegree, materialGroup)), [workingVoltage, pollutionDegree, materialGroup]);
   const creepageHvResult = useMemo(() => (pollutionDegree === 4 ? null : getCreepage(hvToChassis, pollutionDegree, materialGroup)), [hvToChassis, pollutionDegree, materialGroup]);
@@ -105,13 +144,19 @@ export default function CreepageClearanceCalculator() {
   const clearanceHighlightCol = GRID_PDS.indexOf(pollutionDegree as 1 | 2 | 3);
   const clearanceHighlightRow = FIELD_CASES.indexOf(fieldCondition);
 
-  const gridTables: ReportGridTable[] = useMemo(() => [
-    buildGridTable(`Creepage @ Working Voltage (${fmt(workingVoltage, 0)} V)`, MATERIAL_GROUPS, GRID_COL_LABELS, creepageGridValue(workingVoltage), creepageHighlightRow, creepageHighlightCol),
-    buildGridTable(`Creepage @ HV to Chassis (${fmt(hvToChassis, 0)} V)`, MATERIAL_GROUPS, GRID_COL_LABELS, creepageGridValue(hvToChassis), creepageHighlightRow, creepageHighlightCol),
-    buildGridTable(`Clearance @ Working Voltage (${fmt(workingVoltageForClearanceKV, 3)} kV, altitude-adjusted)`, ['Case A', 'Case B'], GRID_COL_LABELS, clearanceGridValue(workingVoltageForClearanceKV), clearanceHighlightRow, clearanceHighlightCol),
-    buildGridTable(`Clearance @ HV to Chassis (${fmt(hvToChassisForClearanceKV, 3)} kV, altitude-adjusted)`, ['Case A', 'Case B'], GRID_COL_LABELS, clearanceGridValue(hvToChassisForClearanceKV), clearanceHighlightRow, clearanceHighlightCol),
+  const gridTables: ReportGridTable[] = useMemo(() => {
+    const tables = [
+      buildGridTable(`Creepage @ Working Voltage (${fmt(workingVoltage, 0)} V)`, MATERIAL_GROUPS, GRID_COL_LABELS, creepageGridValue(workingVoltage), creepageHighlightRow, creepageHighlightCol),
+      buildGridTable(`Creepage @ HV to Chassis (${fmt(hvToChassis, 0)} V)`, MATERIAL_GROUPS, GRID_COL_LABELS, creepageGridValue(hvToChassis), creepageHighlightRow, creepageHighlightCol),
+      buildGridTable(`Clearance @ Working Voltage (${fmt(workingVoltageForClearanceKV, 3)} kV, altitude-adjusted)`, ['Case A', 'Case B'], GRID_COL_LABELS, clearanceGridValue(workingVoltageForClearanceKV), clearanceHighlightRow, clearanceHighlightCol),
+      buildGridTable(`Clearance @ HV to Chassis (${fmt(hvToChassisForClearanceKV, 3)} kV, altitude-adjusted)`, ['Case A', 'Case B'], GRID_COL_LABELS, clearanceGridValue(hvToChassisForClearanceKV), clearanceHighlightRow, clearanceHighlightCol),
+    ];
+    if (ed332ClearanceVoltageKV !== null) {
+      tables.push(buildGridTable(`Clearance @ ED-332 Transient (${fmt(ed332TransientV, 0)} VDC, ${fmt(ed332ClearanceVoltageKV, 3)} kV altitude-adjusted)`, ['Case A', 'Case B'], GRID_COL_LABELS, clearanceGridValue(ed332ClearanceVoltageKV), clearanceHighlightRow, clearanceHighlightCol));
+    }
+    return tables;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [workingVoltage, hvToChassis, workingVoltageForClearanceKV, hvToChassisForClearanceKV, marginFactor, creepageHighlightRow, creepageHighlightCol, clearanceHighlightRow, clearanceHighlightCol]);
+  }, [workingVoltage, hvToChassis, workingVoltageForClearanceKV, hvToChassisForClearanceKV, ed332ClearanceVoltageKV, ed332TransientV, marginFactor, creepageHighlightRow, creepageHighlightCol, clearanceHighlightRow, clearanceHighlightCol]);
 
   const calculationSteps: CalcStepData[] = useMemo(() => {
     const stepsOut: CalcStepData[] = [
@@ -143,6 +188,15 @@ export default function CreepageClearanceCalculator() {
       });
     }
 
+    if (ed332ClearanceVoltageKV !== null && clearanceEd332Result) {
+      stepsOut.push({
+        title: `Required clearance, ED-332 abnormal transient (${ED332_NETWORK_LABELS[ed332NetworkType]}, IEC 60664-1 Table F.2) + safety factor`,
+        formula: 'V_transient = ED-332 worst-case abnormal transient peak (Table 2-2) × altitude factor; Clearance = max(f(V)^b, PD floor) × (1 + FoS)',
+        substitution: `${fmt(ed332TransientV, 0)} VDC × ${fmt(altCorrection.factor, 3)} = ${fmt(ed332TransientV * altCorrection.factor, 0)} V (${fmt(ed332ClearanceVoltageKV, 3)} kV)`,
+        result: `base ${fmt(clearanceEd332Result.mm, 3)} mm${clearanceEd332Result.floorApplied ? ' (PD floor applied)' : ''}, with ${safetyFactorPercent}% margin = ${fmt(clearanceEd332WithMargin ?? 0, 3)} mm`,
+      });
+    }
+
     stepsOut.push({
       title: "Paschen's Law cross-check",
       formula: 'V_b = B·(p·d) / [ln(A·(p·d)) − ln(ln(1 + 1/γ))], A=113/(kPa·cm), B=2740 V/(kPa·cm), γ=0.01',
@@ -151,16 +205,22 @@ export default function CreepageClearanceCalculator() {
     });
 
     return stepsOut;
-  }, [altitude, altitudeUnit, altitudeM, altCorrection, workingVoltage, hvToChassis, workingVoltageForClearanceKV, hvToChassisForClearanceKV, fieldCondition, pollutionDegree, clearanceResult, clearanceHvResult, safetyFactorPercent, clearanceWithMargin, clearanceHvWithMargin, creepageResult, creepageHvResult, materialGroup, creepageWithMargin, creepageHvWithMargin, pressureKPa, paschenGapMm, paschenPd, paschenV, paschenPass]);
+  }, [altitude, altitudeUnit, altitudeM, altCorrection, workingVoltage, hvToChassis, workingVoltageForClearanceKV, hvToChassisForClearanceKV, fieldCondition, pollutionDegree, clearanceResult, clearanceHvResult, safetyFactorPercent, clearanceWithMargin, clearanceHvWithMargin, creepageResult, creepageHvResult, materialGroup, creepageWithMargin, creepageHvWithMargin, pressureKPa, paschenGapMm, paschenPd, paschenV, paschenPass, ed332ClearanceVoltageKV, clearanceEd332Result, clearanceEd332WithMargin, ed332NetworkType, ed332TransientV]);
 
   const inputSections: ReportSection[] = useMemo(() => {
     const elecRows: ReportRow[] = [
       { label: 'Working voltage', value: `${workingVoltage} V rms` },
-      { label: 'Working voltage to chassis', value: `${fmt(hvToChassis, 0)} V rms${hvToChassisOverride === null ? ' (50% of working voltage, default)' : ''}` },
+      { label: 'Working voltage to chassis', value: `${fmt(hvToChassis, 0)} V rms${hvToChassisOverride === null ? ` (${fmt(hvToChassisDefaultFraction * 100, 0)}% of working voltage, default)` : ''}` },
       { label: 'Insulation type', value: 'Functional (assumed)' },
       { label: 'Factor of safety', value: `${safetyFactorPercent}%` },
       { label: 'Electric field condition', value: fieldCondition === 'A' ? 'Inhomogeneous (Case A)' : 'Homogeneous (Case B)' },
     ];
+    if (ed332Advanced) {
+      elecRows.push({ label: 'ED-332 network type', value: ED332_NETWORK_LABELS[ed332NetworkType] });
+      if (ed332ClearanceVoltageKV !== null) {
+        elecRows.push({ label: 'ED-332 abnormal transient voltage', value: `${fmt(ed332TransientV, 0)} VDC` });
+      }
+    }
     const envRows: ReportRow[] = [
       { label: 'Pollution degree', value: `PD${pollutionDegree}` },
       { label: 'Material group', value: MATERIAL_GROUP_CTI[materialGroup].label },
@@ -171,18 +231,23 @@ export default function CreepageClearanceCalculator() {
       { heading: 'Electrical parameters', rows: elecRows },
       { heading: 'Environment', rows: envRows },
     ];
-  }, [workingVoltage, hvToChassis, hvToChassisOverride, safetyFactorPercent, fieldCondition, pollutionDegree, materialGroup, altitude, altitudeUnit]);
+  }, [workingVoltage, hvToChassis, hvToChassisOverride, hvToChassisDefaultFraction, safetyFactorPercent, fieldCondition, pollutionDegree, materialGroup, altitude, altitudeUnit, ed332Advanced, ed332NetworkType, ed332ClearanceVoltageKV, ed332TransientV]);
 
-  const outputSections: ReportSection[] = useMemo(() => [
+  const outputSections: ReportSection[] = useMemo(() => {
+    const requiredDistanceRows: ReportRow[] = [
+      { label: 'Required clearance, working voltage (with margin)', value: `${fmt(clearanceWithMargin, 2)} mm` },
+      { label: 'Required clearance, HV to chassis (with margin)', value: `${fmt(clearanceHvWithMargin, 2)} mm` },
+      { label: 'Required creepage, working voltage (with margin)', value: pollutionDegree === 4 ? 'N/A' : `${fmt(creepageWithMargin ?? 0, 2)} mm` },
+      { label: 'Required creepage, HV to chassis (with margin)', value: pollutionDegree === 4 ? 'N/A' : `${fmt(creepageHvWithMargin ?? 0, 2)} mm` },
+      { label: 'Altitude correction factor', value: fmt(altCorrection.factor, 2) },
+    ];
+    if (ed332ClearanceVoltageKV !== null && clearanceEd332WithMargin !== null) {
+      requiredDistanceRows.push({ label: 'Required clearance, ED-332 abnormal transient (with margin)', value: `${fmt(clearanceEd332WithMargin, 2)} mm` });
+    }
+    return [
     {
       heading: 'Required distances',
-      rows: [
-        { label: 'Required clearance, working voltage (with margin)', value: `${fmt(clearanceWithMargin, 2)} mm` },
-        { label: 'Required clearance, HV to chassis (with margin)', value: `${fmt(clearanceHvWithMargin, 2)} mm` },
-        { label: 'Required creepage, working voltage (with margin)', value: pollutionDegree === 4 ? 'N/A' : `${fmt(creepageWithMargin ?? 0, 2)} mm` },
-        { label: 'Required creepage, HV to chassis (with margin)', value: pollutionDegree === 4 ? 'N/A' : `${fmt(creepageHvWithMargin ?? 0, 2)} mm` },
-        { label: 'Altitude correction factor', value: fmt(altCorrection.factor, 2) },
-      ],
+      rows: requiredDistanceRows,
     },
     {
       heading: "Paschen's Law cross-check",
@@ -191,7 +256,8 @@ export default function CreepageClearanceCalculator() {
         { label: 'Min. gap for working voltage', value: `${fmt(paschenMinGapMm, 3)} mm` },
       ],
     },
-  ], [clearanceWithMargin, clearanceHvWithMargin, pollutionDegree, creepageWithMargin, creepageHvWithMargin, altCorrection, paschenV, paschenMinGapMm]);
+    ];
+  }, [clearanceWithMargin, clearanceHvWithMargin, pollutionDegree, creepageWithMargin, creepageHvWithMargin, altCorrection, paschenV, paschenMinGapMm, ed332ClearanceVoltageKV, clearanceEd332WithMargin]);
 
   const handleExportPdf = () => {
     exportReportToPdf({
@@ -203,7 +269,9 @@ export default function CreepageClearanceCalculator() {
       outputSections,
       calculationSteps,
       gridTables,
-      disclaimer: 'Engineering estimation tool. Standard: IEC 60664-1 (clearance from Table F.2/altitude from Table F.10, creepage from Table F.4). Clearance is driven directly by the working voltage (no overvoltage-category / Table F.1 Un->Uimp step-up) — this is a deliberate tool-scope simplification and will understate the required clearance for circuits exposed to significant transient overvoltages (e.g. direct mains connection); reintroduce an impulse-withstand-voltage margin manually for such designs. Assumes functional insulation throughout. Verify exact values against the current official IEC 60664-1 text, and any applicable product standard, before certification use.',
+      disclaimer: 'Engineering estimation tool. Standard: IEC 60664-1 (clearance from Table F.2/altitude from Table F.10, creepage from Table F.4). Clearance is driven directly by the working voltage (no overvoltage-category / Table F.1 Un->Uimp step-up) — this is a deliberate tool-scope simplification and will understate the required clearance for circuits exposed to significant transient overvoltages (e.g. direct mains connection); reintroduce an impulse-withstand-voltage margin manually for such designs. Assumes functional insulation throughout.'
+        + (ed332Advanced ? ` ED-332 advanced mode (${ED332_NETWORK_LABELS[ed332NetworkType]}): the abnormal-transient clearance scenario uses ED-332's ${fmt(ed332TransientV, 0)} VDC worst-case abnormal voltage transient (1 s duration, Table 2-2) as a conservative proxy for the clearance-driving voltage — this is a sustained-transient value, not a true IEC 60664-1 rated impulse withstand voltage (1.2/50 microsecond waveform), so treat it as a standards-informed engineering judgement rather than a literal substitution. The HV-to-chassis default (when enabled) reflects ED-332 REQ[009]'s abnormal common-mode condition, where a terminal may reach the full working voltage to ground. ED-332 REQ[0030] additionally requires a Dielectric Withstanding Voltage of ${ED332_DIELECTRIC_WITHSTAND_V} VDC at sea level (HVDC terminals to casing / to non-HVDC circuits) and REQ[0031] requires insulation resistance of at least ${ED332_INSULATION_MIN_MOHM.A} MOhm (Category A) or ${ED332_INSULATION_MIN_MOHM.B} MOhm (Category B, default) tested at ${ED332_INSULATION_TEST_V} VDC — both shown as reference values only; this tool does not compute insulation resistance.` : '')
+        + ' Verify exact values against the current official IEC 60664-1 text, and any applicable product standard, before certification use.',
       ...branding,
     });
   };
@@ -226,6 +294,16 @@ export default function CreepageClearanceCalculator() {
         </PremiumGate>
       </div>
 
+      <div style={{ marginBottom: '1.25rem' }}>
+        <PremiumGate feature="Advanced: ED-332 HVDC calculations">
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--text-2)', fontWeight: 600 }}>
+            <input type="checkbox" checked={ed332Advanced} onChange={(e) => setEd332Advanced(e.target.checked)} style={{ width: 'auto' }} />
+            Advanced: ED-332 (HVDC aircraft propulsive systems)
+            <InfoTooltip>EUROCAE ED-332 "Guidance on Characteristics of Aircraft Propulsive High Voltage DC Electrical Systems" defines steady-state and abnormal-transient voltage envelopes for 800 VDC-class propulsive networks. Turn this on to size clearance from ED-332's worst-case abnormal voltage transient instead of the continuous working voltage, default the HV-to-chassis voltage from ED-332's abnormal common-mode condition, and see the standard's Dielectric Withstanding Voltage and insulation resistance requirements alongside your IEC 60664-1 results.</InfoTooltip>
+          </label>
+        </PremiumGate>
+      </div>
+
       <div className="two-col">
         {/* LEFT COLUMN — inputs */}
         <div>
@@ -240,8 +318,8 @@ export default function CreepageClearanceCalculator() {
               <div className="field">
                 <label>Working voltage to chassis (V rms)</label>
                 <input autoComplete="off" type="number" min={0} value={Math.round(hvToChassis)} onChange={e => setHvToChassisOverride(Number(e.target.value))} />
-                <span className="hint">Defaults to 50% of working voltage — edit to override.{hvToChassisOverride !== null && (
-                  <> {' '}<button className="btn small" style={{ marginLeft: '0.4rem' }} onClick={() => setHvToChassisOverride(null)}>Reset to 50%</button></>
+                <span className="hint">Defaults to {fmt(hvToChassisDefaultFraction * 100, 0)}% of working voltage{ed332Advanced && ed332UseAbnormalCmForChassis ? ' (ED-332 abnormal common-mode)' : ''} — edit to override.{hvToChassisOverride !== null && (
+                  <> {' '}<button className="btn small" style={{ marginLeft: '0.4rem' }} onClick={() => setHvToChassisOverride(null)}>Reset to {fmt(hvToChassisDefaultFraction * 100, 0)}%</button></>
                 )}</span>
               </div>
               <div className="field">
@@ -334,6 +412,45 @@ export default function CreepageClearanceCalculator() {
               </div>
             </div>
           </div>
+
+          {ed332Advanced && (
+            <div className="card">
+              <div className="card-title"><span><span className="step-num">3</span>ED-332 — HVDC propulsive system</span></div>
+              <div className="field" style={{ marginBottom: '0.85rem' }}>
+                <label>Network type</label>
+                <div className="segmented">
+                  {(['UR', 'R'] as Ed332NetworkType[]).map(t => (
+                    <button key={t} className={ed332NetworkType === t ? 'active' : ''} onClick={() => setEd332NetworkType(t)}>{ED332_NETWORK_LABELS[t]}</button>
+                  ))}
+                </div>
+                <span className="hint">
+                  Steady-state range (Table 2-1): {ED332_STEADY_STATE_V[ed332NetworkType].minV}&ndash;{ED332_STEADY_STATE_V[ed332NetworkType].maxV} VDC.
+                  Worst-case abnormal transient (Table 2-2, {ED332_TRANSIENTS[0].durationS} s): {fmt(ed332TransientV, 0)} VDC.
+                </span>
+              </div>
+              <div className="field" style={{ marginBottom: '0.6rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--text-2)', fontWeight: 400 }}>
+                  <input type="checkbox" checked={ed332UseTransientForClearance} onChange={e => setEd332UseTransientForClearance(e.target.checked)} style={{ width: 'auto' }} />
+                  Size clearance from the {fmt(ed332TransientV, 0)} VDC abnormal transient peak
+                  <InfoTooltip>Adds a fifth clearance scenario, using ED-332's worst-case abnormal voltage transient (Table 2-2, Condition 1) as the clearance-driving voltage instead of the continuous working voltage — filling the Table F.1 rated-impulse-withstand-voltage step this tool otherwise skips. This is a conservative proxy, not a literal impulse-withstand substitution: the transient is a 1-second sustained overvoltage, not a 1.2/50 microsecond impulse waveform.</InfoTooltip>
+                </label>
+              </div>
+              <div className="field">
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--text-2)', fontWeight: 400 }}>
+                  <input type="checkbox" checked={ed332UseAbnormalCmForChassis} onChange={e => setEd332UseAbnormalCmForChassis(e.target.checked)} style={{ width: 'auto' }} />
+                  Default HV-to-chassis to 100% of working voltage
+                  <InfoTooltip>ED-332 REQ[009]: in an abnormal (fault) condition, a terminal may reach the full differential/working voltage relative to chassis ground (the standard's own worked example: for VDM = 800 V, 0 V &lt; VPG &lt; 800 V). Overrides this tool's usual 50%-of-working-voltage default for the HV-to-chassis scenario — still editable via the input above.</InfoTooltip>
+                </label>
+              </div>
+              <div className="field" style={{ marginTop: '0.85rem' }}>
+                <label>Reference: other ED-332 insulation requirements (informational — not computed by this tool)</label>
+                <span className="hint">
+                  REQ[0030] Dielectric Withstanding Voltage: {ED332_DIELECTRIC_WITHSTAND_V} VDC at sea level (HVDC terminals to casing, and to non-HVDC circuits).<br />
+                  REQ[0031] Insulation resistance, tested at {ED332_INSULATION_TEST_V} VDC: &ge;{ED332_INSULATION_MIN_MOHM.A} MΩ (Category A) or &ge;{ED332_INSULATION_MIN_MOHM.B} MΩ (Category B, default if unspecified).
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* RIGHT COLUMN — results */}
@@ -377,6 +494,16 @@ export default function CreepageClearanceCalculator() {
               highlightRow={clearanceHighlightRow}
               highlightCol={clearanceHighlightCol}
             />
+            {ed332ClearanceVoltageKV !== null && (
+              <ComparisonGrid
+                title={`Clearance @ ED-332 Transient (${fmt(ed332TransientV, 0)} VDC, ${fmt(ed332ClearanceVoltageKV, 3)} kV altitude-adjusted)`}
+                rowLabels={['Case A', 'Case B']}
+                colLabels={GRID_COL_LABELS}
+                getValue={clearanceGridValue(ed332ClearanceVoltageKV)}
+                highlightRow={clearanceHighlightRow}
+                highlightCol={clearanceHighlightCol}
+              />
+            )}
           </div>
 
           <div className="card">
@@ -435,6 +562,15 @@ export default function CreepageClearanceCalculator() {
               creepage table value (enclosure/coating design required) but clearance still computes via its
               footnoted floor. This tool supports engineering estimation — verify exact values against the current
               official IEC 60664-1 text, and any applicable product standard, before certification use.
+              {ed332Advanced && (
+                <> <strong>ED-332 advanced mode</strong> (read from a licensed copy of EUROCAE ED-332, 22 January 2025)
+                adds a fifth clearance scenario driven by the standard's worst-case abnormal voltage transient
+                (Table 2-2) — a sustained 1-second overvoltage, not a true IEC 60664-1 impulse waveform, so treat it
+                as a conservative proxy rather than a literal substitution — and can default the HV-to-chassis
+                voltage from the standard's abnormal common-mode condition (REQ[009]). The Dielectric Withstanding
+                Voltage (REQ[0030]) and insulation resistance (REQ[0031]) requirements are shown for reference only
+                and are not computed by this tool.</>
+              )}
             </p>
           </div>
         </div>
