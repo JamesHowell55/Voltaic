@@ -6,6 +6,28 @@ interface Props {
 
 const HOP_R = 5;
 
+// Cycled by wire-spec index (see harnessSchematicLayout's legend) so every
+// distinct construction+AWG combination in a diagram gets its own colour,
+// keeping traces identifiable without an on-wire text label that would
+// otherwise clash with connector boxes and crossing wires.
+const WIRE_PALETTE = [
+  'var(--accent)',
+  'var(--blue)',
+  'var(--warn)',
+  'var(--pos)',
+  'var(--neg)',
+  'color-mix(in srgb, var(--blue) 55%, var(--warn))',
+  'color-mix(in srgb, var(--accent) 50%, var(--blue))',
+  'color-mix(in srgb, var(--warn) 50%, var(--neg))',
+  'color-mix(in srgb, var(--pos) 50%, var(--blue))',
+  'color-mix(in srgb, var(--accent) 50%, var(--neg))',
+  'color-mix(in srgb, var(--pos) 50%, var(--warn))',
+  'color-mix(in srgb, var(--neg) 50%, var(--blue))',
+];
+function colorForSpec(specIndex: number): string {
+  return WIRE_PALETTE[specIndex % WIRE_PALETTE.length];
+}
+
 /** Builds an SVG path string for an orthogonal polyline, inserting a small
  *  semicircular "hop" bump on any horizontal segment where a different net's
  *  wire crosses it without connecting — the standard schematic convention
@@ -48,72 +70,87 @@ export default function HarnessSchematicDiagram({ layout }: Props) {
   for (const g of layout.grounds) connectedPins.add(`${g.connectorId}:${g.pin}`);
 
   return (
-    <svg viewBox={`0 0 ${layout.width} ${layout.height}`} width="100%" style={{ minHeight: 240 }}>
-      {layout.wires.map((w) => (
-        <g key={w.netId}>
-          <path d={pathWithHops(w.points, w.hops)} fill="none" stroke="var(--accent)" strokeWidth={1.5} />
-          <rect x={w.midX - w.label.length * 2.6} y={w.midY - 12} width={w.label.length * 5.2} height={12} fill="var(--bg-card)" opacity={0.9} />
-          <text x={w.midX} y={w.midY - 3} textAnchor="middle" fontSize="8.5" fill="var(--text-2)" fontFamily="ui-monospace, monospace">{w.label}</text>
-        </g>
-      ))}
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'flex-start' }}>
+      <svg viewBox={`0 0 ${layout.width} ${layout.height}`} width="100%" style={{ minHeight: 240, flex: '1 1 480px' }}>
+        {layout.wires.map((w) => (
+          <path key={w.netId} d={pathWithHops(w.points, w.hops)} fill="none" stroke={colorForSpec(w.specIndex)} strokeWidth={1.5}>
+            <title>{w.tooltip}</title>
+          </path>
+        ))}
 
-      {layout.grounds.map((g, i) => (
-        <g key={`gnd-${i}`}>
-          <path d={pathWithHops([{ x: g.stubX1, y: g.stubY1 }, { x: g.x, y: g.y }], g.hops)} fill="none" stroke="var(--text-2)" strokeWidth={1.5} />
-          <line x1={g.x} y1={g.y - 8} x2={g.x} y2={g.y + 8} stroke="var(--text)" strokeWidth={1.5} />
-          <line x1={g.x + 4} y1={g.y - 5} x2={g.x + 4} y2={g.y + 5} stroke="var(--text)" strokeWidth={1.3} />
-          <line x1={g.x + 8} y1={g.y - 2} x2={g.x + 8} y2={g.y + 2} stroke="var(--text)" strokeWidth={1} />
-          <text x={g.x + 12} y={g.y + 3} fontSize="8" fill="var(--text-2)" fontFamily="ui-monospace, monospace">GND</text>
-        </g>
-      ))}
-
-      {layout.connectors.map((box) => {
-        const twistPairs: { pinA: number; pinB: number; yA: number; yB: number }[] = [];
-        for (const p of box.pins) {
-          if (p.twistedWithPin != null && p.twistedWithPin > p.pin) {
-            const partner = box.pins.find((o) => o.pin === p.twistedWithPin);
-            if (partner) twistPairs.push({ pinA: p.pin, pinB: partner.pin, yA: p.y, yB: partner.y });
-          }
-        }
-        return (
-          <g key={box.id}>
-            <rect x={box.x} y={box.y} width={box.width} height={box.height} rx={4} fill="var(--bg-card)" stroke="var(--border-strong)" strokeWidth={1.5} />
-            <rect x={box.x} y={box.y} width={box.width} height={30} rx={4} fill="color-mix(in srgb, var(--accent) 12%, transparent)" stroke="var(--border-strong)" strokeWidth={1} />
-            <text x={box.x + box.width / 2} y={box.y + 14} textAnchor="middle" fontSize="11" fontWeight="700" fill="var(--text)" fontFamily="ui-monospace, monospace">{box.name}</text>
-            <text x={box.x + box.width / 2} y={box.y + 25} textAnchor="middle" fontSize="8" fill="var(--text-2)" fontFamily="ui-monospace, monospace">{box.shellLabel}</text>
-
-            {box.pins.map((p) => {
-              const connected = connectedPins.has(`${box.id}:${p.pin}`);
-              return (
-                <g key={p.pin}>
-                  <line x1={box.x} x2={box.x + box.width} y1={p.y} y2={p.y} stroke="var(--border-subtle)" strokeWidth={0.5} />
-                  <circle cx={box.x} cy={p.y} r={2.5} fill={connected ? 'var(--accent)' : 'var(--text-faint)'} />
-                  <circle cx={box.x + box.width} cy={p.y} r={2.5} fill={connected ? 'var(--accent)' : 'var(--text-faint)'} />
-                  <text x={box.x + 6} y={p.y + 3} fontSize="7.5" fill="var(--text-faint)" fontFamily="ui-monospace, monospace">{p.pin}</text>
-                  <text x={box.x + box.width / 2} y={p.y + 3} textAnchor="middle" fontSize="8" fill={connected ? 'var(--text)' : 'var(--text-faint)'} fontFamily="ui-monospace, monospace">{p.signalName}</text>
-                  <text x={box.x + box.width - 6} y={p.y + 3} textAnchor="end" fontSize="7.5" fill="var(--text-faint)" fontFamily="ui-monospace, monospace">{p.pin}</text>
-                </g>
-              );
-            })}
-
-            {/* twisted-pair brackets — drawn on the right edge (the common wire-exit side); a
-                small zigzag stands in for the physical twist, per the convention shown in
-                Altium's harness wiring diagrams. */}
-            {twistPairs.map((tp) => {
-              const bx = box.x + box.width + 5;
-              const midY = (tp.yA + tp.yB) / 2;
-              return (
-                <g key={`${tp.pinA}-${tp.pinB}`}>
-                  <path d={`M ${box.x + box.width} ${tp.yA} L ${bx} ${tp.yA} L ${bx} ${tp.yB} L ${box.x + box.width} ${tp.yB}`} fill="none" stroke="var(--blue)" strokeWidth={1.2} />
-                  {[-4, 0, 4].map((dy) => (
-                    <path key={dy} d={`M ${bx - 3} ${midY + dy - 2} L ${bx + 3} ${midY + dy} L ${bx - 3} ${midY + dy + 2}`} fill="none" stroke="var(--blue)" strokeWidth={1} />
-                  ))}
-                </g>
-              );
-            })}
+        {layout.grounds.map((g, i) => (
+          <g key={`gnd-${i}`}>
+            <path d={pathWithHops([{ x: g.stubX1, y: g.stubY1 }, { x: g.x, y: g.y }], g.hops)} fill="none" stroke={colorForSpec(g.specIndex)} strokeWidth={1.5} strokeDasharray={g.kind === 'shield' ? '3,2' : undefined} />
+            <line x1={g.x} y1={g.y - 8} x2={g.x} y2={g.y + 8} stroke="var(--text)" strokeWidth={1.5} />
+            <line x1={g.x + 4} y1={g.y - 5} x2={g.x + 4} y2={g.y + 5} stroke="var(--text)" strokeWidth={1.3} />
+            <line x1={g.x + 8} y1={g.y - 2} x2={g.x + 8} y2={g.y + 2} stroke="var(--text)" strokeWidth={1} />
+            <text x={g.x + 12} y={g.y + 3} fontSize="8" fill="var(--text-2)" fontFamily="ui-monospace, monospace">{g.kind === 'shield' ? 'SHLD' : 'GND'}</text>
           </g>
-        );
-      })}
-    </svg>
+        ))}
+
+        {layout.connectors.map((box) => {
+          const twistPairs: { pinA: number; pinB: number; yA: number; yB: number }[] = [];
+          for (const p of box.pins) {
+            if (p.twistedWithPin != null && p.twistedWithPin > p.pin) {
+              const partner = box.pins.find((o) => o.pin === p.twistedWithPin);
+              if (partner) twistPairs.push({ pinA: p.pin, pinB: partner.pin, yA: p.y, yB: partner.y });
+            }
+          }
+          return (
+            <g key={box.id}>
+              <rect x={box.x} y={box.y} width={box.width} height={box.height} rx={4} fill="var(--bg-card)" stroke="var(--border-strong)" strokeWidth={1.5} />
+              <rect x={box.x} y={box.y} width={box.width} height={30} rx={4} fill="color-mix(in srgb, var(--accent) 12%, transparent)" stroke="var(--border-strong)" strokeWidth={1} />
+              <text x={box.x + box.width / 2} y={box.y + 14} textAnchor="middle" fontSize="11" fontWeight="700" fill="var(--text)" fontFamily="ui-monospace, monospace">{box.name}</text>
+              <text x={box.x + box.width / 2} y={box.y + 25} textAnchor="middle" fontSize="8" fill="var(--text-2)" fontFamily="ui-monospace, monospace">{box.subtitle}</text>
+
+              {box.pins.map((p) => {
+                const connected = connectedPins.has(`${box.id}:${p.pin}`);
+                const dotColor = connected ? 'var(--accent)' : 'var(--text-faint)';
+                const dotR = p.isSpliceAnchor ? 4.5 : 2.5;
+                return (
+                  <g key={p.pin}>
+                    <line x1={box.x} x2={box.x + box.width} y1={p.y} y2={p.y} stroke="var(--border-subtle)" strokeWidth={0.5} />
+                    <circle cx={box.x} cy={p.y} r={dotR} fill={dotColor} stroke={p.isSpliceAnchor ? 'var(--bg-card)' : 'none'} strokeWidth={p.isSpliceAnchor ? 1 : 0} />
+                    <circle cx={box.x + box.width} cy={p.y} r={dotR} fill={dotColor} stroke={p.isSpliceAnchor ? 'var(--bg-card)' : 'none'} strokeWidth={p.isSpliceAnchor ? 1 : 0} />
+                    {p.isSpliceAnchor && <title>Splice — multiple wires joined at this pin</title>}
+                    <text x={box.x + 6} y={p.y + 3} fontSize="7.5" fill="var(--text-faint)" fontFamily="ui-monospace, monospace">{p.pin}</text>
+                    <text x={box.x + box.width / 2} y={p.y + 3} textAnchor="middle" fontSize="8" fill={connected ? 'var(--text)' : 'var(--text-faint)'} fontFamily="ui-monospace, monospace">{p.signalName}</text>
+                    <text x={box.x + box.width - 6} y={p.y + 3} textAnchor="end" fontSize="7.5" fill="var(--text-faint)" fontFamily="ui-monospace, monospace">{p.pin}</text>
+                  </g>
+                );
+              })}
+
+              {/* twisted-pair brackets — drawn on the right edge (the common wire-exit side); a
+                  small zigzag stands in for the physical twist, per the convention shown in
+                  Altium's harness wiring diagrams. */}
+              {twistPairs.map((tp) => {
+                const bx = box.x + box.width + 5;
+                const midY = (tp.yA + tp.yB) / 2;
+                return (
+                  <g key={`${tp.pinA}-${tp.pinB}`}>
+                    <path d={`M ${box.x + box.width} ${tp.yA} L ${bx} ${tp.yA} L ${bx} ${tp.yB} L ${box.x + box.width} ${tp.yB}`} fill="none" stroke="var(--blue)" strokeWidth={1.2} />
+                    {[-4, 0, 4].map((dy) => (
+                      <path key={dy} d={`M ${bx - 3} ${midY + dy - 2} L ${bx + 3} ${midY + dy} L ${bx - 3} ${midY + dy + 2}`} fill="none" stroke="var(--blue)" strokeWidth={1} />
+                    ))}
+                  </g>
+                );
+              })}
+            </g>
+          );
+        })}
+      </svg>
+
+      {layout.legend.length > 0 && (
+        <div style={{ flex: '0 0 auto', display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.78rem', fontFamily: 'ui-monospace, monospace' }}>
+          <div style={{ fontWeight: 700, color: 'var(--text-2)', fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.03em' }}>Wire spec key</div>
+          {layout.legend.map((entry, i) => (
+            <div key={entry.label} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <span style={{ width: 12, height: 12, borderRadius: 2, background: colorForSpec(i), flexShrink: 0 }} />
+              <span style={{ color: 'var(--text-2)' }}>{entry.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

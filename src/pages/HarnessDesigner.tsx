@@ -3,16 +3,12 @@ import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
 import PremiumGate from '../components/PremiumGate';
-import InfoTooltip from '../components/InfoTooltip';
 import HarnessSchematicDiagram from '../components/HarnessSchematicDiagram';
 import { renderHarnessSchematicSvg } from '../lib/pdfDiagrams';
+import { CONTACT_SIZE_SPECS, CONTACT_SIZES, type ContactSize } from '../lib/connectorLibrary';
 import {
-  D38999_SHELL_SIZES, CONTACT_SIZE_SPECS, CONNECTOR_TYPES, FINISH_OPTIONS, getConnectorType, getFinish,
-  availableContactSizes, type ContactSize,
-} from '../lib/connectorLibrary';
-import {
-  makeDefaultConnector, validatePinCount, setPinDestination, setTwistedPartner, maxPinCountFor,
-  type ConnectorSpec, type Destination, type PinSpec,
+  makeDefaultConnector, setPinDestination, setTwistedPartner, setShieldGrounded, pinHasShield,
+  type ConnectorSpec, type Destination,
 } from '../lib/harnessDesignerLogic';
 import { buildSchematicLayout } from '../lib/harnessSchematicLayout';
 import { WIRE_CONSTRUCTIONS, getWireConstruction, type WireCategory } from '../lib/harnessWireTypes';
@@ -28,13 +24,19 @@ function destValue(d: Destination): string {
   return `${d.connectorId}:${d.pin}`;
 }
 
-/** A destination pin already claimed by some OTHER pin (not the one whose
- *  dropdown we're rendering) — used to visually dim already-taken options
- *  without blocking the user from re-picking them (setPinDestination already
- *  handles "stealing" a taken pin cleanly). */
-function isPinTaken(candidate: PinSpec, editingConnectorId: string, editingPin: number): boolean {
-  return candidate.destination.kind === 'pin'
-    && !(candidate.destination.connectorId === editingConnectorId && candidate.destination.pin === editingPin);
+/** How many OTHER pins (not the one whose dropdown we're rendering) already
+ *  point at this candidate pin — picking a candidate with count > 0 doesn't
+ *  steal anything, it joins a multi-drop splice with whichever pins are
+ *  already there. */
+function splicedCount(connectors: ConnectorSpec[], candidateConnectorId: string, candidatePin: number, editingConnectorId: string, editingPin: number): number {
+  let count = 0;
+  for (const c of connectors) {
+    for (const p of c.pins) {
+      if (c.id === editingConnectorId && p.pin === editingPin) continue;
+      if (p.destination.kind === 'pin' && p.destination.connectorId === candidateConnectorId && p.destination.pin === candidatePin) count++;
+    }
+  }
+  return count;
 }
 
 let nextConnectorId = 3;
@@ -44,15 +46,15 @@ export default function HarnessDesigner() {
   const branding = useBranding();
 
   const [connectors, setConnectors] = useState<ConnectorSpec[]>([
-    makeDefaultConnector('c1', 'SK1', 17, '16'),
-    makeDefaultConnector('c2', 'SK2', 17, '16'),
+    makeDefaultConnector('c1', 'CON1', '16'),
+    makeDefaultConnector('c2', 'CON2', '16'),
   ]);
   const [activeId, setActiveId] = useState('c1');
   const active = connectors.find((c) => c.id === activeId) ?? connectors[0];
 
   const addConnector = () => {
     const id = `c${nextConnectorId++}`;
-    const conn = makeDefaultConnector(id, `SK${connectors.length + 1}`, 17, '16');
+    const conn = makeDefaultConnector(id, `CON${connectors.length + 1}`, '16');
     setConnectors((cs) => [...cs, conn]);
     setActiveId(id);
   };
@@ -70,15 +72,11 @@ export default function HarnessDesigner() {
     }
   };
 
-  const updateConnectorSpec = (id: string, patch: Partial<Pick<ConnectorSpec, 'name' | 'shellSize' | 'contactSize' | 'connectorTypeId' | 'finishId'>>) => {
+  const updateConnectorSpec = (id: string, patch: Partial<Pick<ConnectorSpec, 'name' | 'contactSize'>>) => {
     setConnectors((cs) => cs.map((c) => {
       if (c.id !== id) return c;
       const next: ConnectorSpec = { ...c, ...patch };
-      if (patch.shellSize !== undefined || patch.contactSize !== undefined) {
-        const validSizes = availableContactSizes(next.shellSize);
-        if (!validSizes.includes(next.contactSize)) next.contactSize = validSizes[0];
-        const max = maxPinCountFor(next);
-        if (next.pins.length > max) next.pins = next.pins.slice(0, max);
+      if (patch.contactSize !== undefined) {
         const allowedAwg = CONTACT_SIZE_SPECS[next.contactSize].awgRange;
         next.pins = next.pins.map((p) => (allowedAwg.includes(p.awg) ? p : { ...p, awg: allowedAwg[0] }));
       }
@@ -89,8 +87,7 @@ export default function HarnessDesigner() {
   const setPinCount = (id: string, count: number) => {
     setConnectors((cs) => cs.map((c) => {
       if (c.id !== id) return c;
-      const max = maxPinCountFor(c);
-      const target = Math.max(1, Math.min(Math.round(count), max));
+      const target = Math.max(1, Math.min(Math.round(count), 128));
       if (target === c.pins.length) return c;
       if (target < c.pins.length) return { ...c, pins: c.pins.slice(0, target) };
       const awg = CONTACT_SIZE_SPECS[c.contactSize].awgRange[0];
@@ -103,7 +100,16 @@ export default function HarnessDesigner() {
   };
 
   const updatePin = (connectorId: string, pin: number, patch: Partial<{ signalName: string; constructionId: string; awg: number }>) => {
-    setConnectors((cs) => cs.map((c) => (c.id === connectorId ? { ...c, pins: c.pins.map((p) => (p.pin === pin ? { ...p, ...patch } : p)) } : c)));
+    setConnectors((cs) => cs.map((c) => (c.id === connectorId ? {
+      ...c,
+      pins: c.pins.map((p) => {
+        if (p.pin !== pin) return p;
+        const next = { ...p, ...patch };
+        // A construction change that drops the shield makes a stale shield-ground flag meaningless.
+        if (patch.constructionId !== undefined && !pinHasShield(next)) next.shieldGrounded = undefined;
+        return next;
+      }),
+    } : c)));
   };
 
   const updatePinDestination = (connectorId: string, pin: number, destination: Destination) => {
@@ -114,34 +120,30 @@ export default function HarnessDesigner() {
     setConnectors((cs) => setTwistedPartner(cs, connectorId, pin, partnerPin));
   };
 
-  const pinCountValidations = useMemo(() => connectors.map((c) => ({ id: c.id, name: c.name, ...validatePinCount(c) })), [connectors]);
+  const updateShieldGrounded = (connectorId: string, pin: number, grounded: boolean) => {
+    setConnectors((cs) => setShieldGrounded(cs, connectorId, pin, grounded));
+  };
+
   const layout = useMemo(() => buildSchematicLayout(connectors), [connectors]);
-  const overallPass = pinCountValidations.every((v) => v.valid);
+  const signalGroundCount = useMemo(() => layout.grounds.filter((g) => g.kind === 'signal').length, [layout]);
+  const shieldGroundCount = useMemo(() => layout.grounds.filter((g) => g.kind === 'shield').length, [layout]);
 
   const calculationSteps: CalcStepData[] = useMemo(() => [
     {
-      title: 'Pin budget per connector',
-      formula: 'used pins ≤ max contacts for the selected shell size + contact size (real MIL-DTL-38999 Series III single-size insert arrangement)',
-      substitution: pinCountValidations.map((v) => `${v.name}: ${v.used}/${v.max}`).join(', '),
-      result: pinCountValidations.every((v) => v.valid) ? 'All connectors within their pin budget' : 'One or more connectors exceed their pin budget',
-    },
-    {
       title: 'Net extraction',
-      formula: 'Every pin\'s destination (Unused / Ground / another connector\'s pin) is walked into a deduplicated net list; wiring is strictly one-to-one point-to-point (no multi-drop splices in this tool)',
+      formula: 'Every pin\'s destination (Unused / Ground / another connector\'s pin) builds an undirected graph; each connected component of 2+ pins is one net — exactly 2 members is a point-to-point wire, 3+ is a multi-drop splice (rendered as spokes from one shared anchor pin). Shield/drain-to-ground is a separate per-pin flag, independent of the pin\'s own signal destination.',
       substitution: `${connectors.length} connector(s), ${connectors.reduce((a, c) => a + c.pins.length, 0)} total pins`,
-      result: `${layout.wires.length} pin-to-pin net(s), ${layout.grounds.length} ground connection(s)`,
+      result: `${layout.wires.length} pin-to-pin net(s), ${signalGroundCount} ground connection(s)${shieldGroundCount > 0 ? `, ${shieldGroundCount} shield ground(s)` : ''}`,
     },
-  ], [pinCountValidations, connectors, layout]);
+  ], [connectors, layout, signalGroundCount, shieldGroundCount]);
 
   const inputSections: ReportSection[] = useMemo(() => connectors.map((c) => {
     const rows: ReportRow[] = [
-      { label: 'Shell size / type', value: `${c.shellSize} (${D38999_SHELL_SIZES.find((s) => s.shellSize === c.shellSize)?.militaryLetter}) · ${getConnectorType(c.connectorTypeId).label}` },
       { label: 'Contact size', value: `#${c.contactSize} (${CONTACT_SIZE_SPECS[c.contactSize].currentRatingA} A rated)` },
-      { label: 'Finish / salt spray', value: `${getFinish(c.finishId).label} — ${getFinish(c.finishId).saltSprayHours} h` },
-      { label: 'Pin utilization', value: `${c.pins.length}/${maxPinCountFor(c)}` },
+      { label: 'Pin count', value: `${c.pins.length}` },
       ...c.pins.map((p): ReportRow => ({
         label: `Pin ${p.pin} — ${p.signalName}`,
-        value: `${p.awg} AWG ${getWireConstruction(p.constructionId).label}${p.twistedWithPin != null ? ` (twisted w/ pin ${p.twistedWithPin})` : ''} → ${p.destination.kind === 'unused' ? 'Unused' : p.destination.kind === 'ground' ? 'Ground/chassis' : `${connectors.find((o) => o.id === p.destination.connectorId)?.name ?? '?'} pin ${p.destination.pin}`}`,
+        value: `${p.awg} AWG ${getWireConstruction(p.constructionId).label}${p.twistedWithPin != null ? ` (twisted w/ pin ${p.twistedWithPin})` : ''}${p.shieldGrounded && pinHasShield(p) ? ' (shield→GND)' : ''} → ${p.destination.kind === 'unused' ? 'Unused' : p.destination.kind === 'ground' ? 'Ground/chassis' : `${connectors.find((o) => o.id === p.destination.connectorId)?.name ?? '?'} pin ${p.destination.pin}`}`,
       })),
     ];
     return { heading: `Connector ${c.name}`, rows };
@@ -151,32 +153,30 @@ export default function HarnessDesigner() {
     {
       heading: 'Validation summary',
       rows: [
-        ...pinCountValidations.map((v): ReportRow => ({ label: `${v.name} pin budget`, value: `${v.used}/${v.max} — ${v.valid ? 'OK' : 'EXCEEDS BUDGET'}` })),
-        { label: 'Nets', value: `${layout.wires.length} pin-to-pin, ${layout.grounds.length} ground` },
+        { label: 'Nets', value: `${layout.wires.length} pin-to-pin, ${signalGroundCount} ground${shieldGroundCount > 0 ? `, ${shieldGroundCount} shield ground` : ''}` },
       ],
     },
-  ], [pinCountValidations, layout]);
+  ], [layout, signalGroundCount, shieldGroundCount]);
 
   const handleExportPdf = () => {
     exportReportToPdf({
       tabName: 'Harness_Designer',
       pageTitle: 'Harness Designer',
       accentHex,
-      passStatus: { pass: overallPass, label: overallPass ? 'All connectors within pin budget' : 'One or more connectors exceed pin budget — review' },
+      passStatus: null,
       inputSections,
       outputSections,
       calculationSteps,
       diagrams: [
         { title: 'Wiring schematic', svgMarkup: renderHarnessSchematicSvg(layout, accentHex) },
       ],
-      disclaimer: 'Engineering design tool for MIL-DTL-38999 Series III connector pinouts. Shell-size pin-count limits and contact-size current ratings are sourced from a real MIL-DTL-38999 Series III cross-reference catalog; this tool scopes to a single dominant contact size per connector and strictly one-to-one point-to-point wiring (no multi-drop splices). The generated schematic is a point-to-point wiring diagram (connectors as labelled boxes with numbered pins), not a to-scale connector face/pin-arrangement drawing — verify final pin arrangement against the manufacturer\'s insert arrangement drawing before cutting a harness.',
+      disclaimer: 'Engineering design tool for connector pinout and wiring planning. Contact-size current ratings are sourced from a real MIL-DTL-38999 Series III contact cross-reference catalog; this tool scopes to a single dominant contact size and a direct user-entered pin count per connector. Multiple pins may point at the same target pin to form a multi-drop splice, drawn as a filled junction dot at one representative anchor pin with a wire from every other spliced pin back to it (electrically equivalent to a real splice, not a literal drawing of a splice sleeve/crimp at a separate mid-harness point). A pin whose wire construction has a shield (twisted shielded pair / shielded single) can independently tie that shield/drain to chassis ground, drawn as its own dashed "SHLD" stub separate from that pin\'s signal destination. The generated schematic is a point-to-point wiring diagram (connectors as labelled boxes with numbered pins), not a to-scale connector face/pin-arrangement drawing — verify final pin arrangement against the manufacturer\'s insert arrangement drawing before cutting a harness.',
       ...branding,
     });
   };
 
   if (!active) return null;
   const otherConnectors = connectors.filter((c) => c.id !== active.id);
-  const activeMax = maxPinCountFor(active);
 
   return (
     <div className="page">
@@ -185,8 +185,8 @@ export default function HarnessDesigner() {
           <div className="eyebrow">● Harness Designer</div>
           <h1>Harness Designer</h1>
           <p>
-            MIL-DTL-38999 Series III connector selection, per-pin wire assignment across multiple branches, and
-            an auto-generated point-to-point wiring schematic with connector naming, pin numbers, and wire specs.
+            Connector naming, per-pin wire assignment across multiple branches (including multi-drop splices),
+            and an auto-generated point-to-point wiring schematic with connector naming, pin numbers, and wire specs.
           </p>
         </div>
         <PremiumGate feature="PDF export">
@@ -200,24 +200,21 @@ export default function HarnessDesigner() {
           <button className="btn small" onClick={addConnector} disabled={connectors.length >= 8}>+ Add connector</button>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-          {connectors.map((c) => {
-            const v = pinCountValidations.find((x) => x.id === c.id)!;
-            return (
-              <button
-                key={c.id}
-                className={c.id === activeId ? 'active' : ''}
-                onClick={() => setActiveId(c.id)}
-                style={{
-                  padding: '0.5rem 0.9rem', borderRadius: 8, fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer',
-                  border: c.id === activeId ? '1px solid var(--accent)' : '1px solid var(--border)',
-                  background: c.id === activeId ? 'var(--accent-glow)' : 'var(--bg-input)',
-                  color: v.valid ? 'var(--text)' : 'var(--warn)',
-                }}
-              >
-                {c.name} ({v.used}/{v.max})
-              </button>
-            );
-          })}
+          {connectors.map((c) => (
+            <button
+              key={c.id}
+              className={c.id === activeId ? 'active' : ''}
+              onClick={() => setActiveId(c.id)}
+              style={{
+                padding: '0.5rem 0.9rem', borderRadius: 8, fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer',
+                border: c.id === activeId ? '1px solid var(--accent)' : '1px solid var(--border)',
+                background: c.id === activeId ? 'var(--accent-glow)' : 'var(--bg-input)',
+                color: 'var(--text)',
+              }}
+            >
+              {c.name}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -235,47 +232,16 @@ export default function HarnessDesigner() {
                 <input autoComplete="off" value={active.name} onChange={(e) => updateConnectorSpec(active.id, { name: e.target.value })} />
               </div>
               <div className="field">
-                <label>Connector type</label>
-                <select value={active.connectorTypeId} onChange={(e) => updateConnectorSpec(active.id, { connectorTypeId: e.target.value })}>
-                  {CONNECTOR_TYPES.map((t) => (
-                    <option key={t.id} value={t.id}>{t.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label>
-                  Shell size (MIL-DTL-38999 III)
-                  <InfoTooltip>Shell size sets the maximum number of contacts of a given size — a real single-contact-size MIL-DTL-38999 Series III insert arrangement, e.g. shell 17 holds up to 55×#22D or 26×#20 or 8×#16 or 6×#12.</InfoTooltip>
-                </label>
-                <select value={active.shellSize} onChange={(e) => updateConnectorSpec(active.id, { shellSize: Number(e.target.value) })}>
-                  {D38999_SHELL_SIZES.map((s) => (
-                    <option key={s.shellSize} value={s.shellSize}>Shell {s.shellSize} ({s.militaryLetter})</option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
                 <label>Contact size</label>
                 <select value={active.contactSize} onChange={(e) => updateConnectorSpec(active.id, { contactSize: e.target.value as ContactSize })}>
-                  {availableContactSizes(active.shellSize).map((size) => (
+                  {CONTACT_SIZES.map((size) => (
                     <option key={size} value={size}>#{size} ({CONTACT_SIZE_SPECS[size].currentRatingA} A, {CONTACT_SIZE_SPECS[size].awgRange.join('/')} AWG)</option>
                   ))}
                 </select>
               </div>
               <div className="field">
-                <label>
-                  Finish / salt spray
-                  <InfoTooltip>W and Z finishes are both qualified to 500 h salt spray (Z is a RoHS-compliant alternative to cadmium); K (passivated stainless) reaches 1000 h; N (electroless nickel) is lower at 48 h.</InfoTooltip>
-                </label>
-                <select value={active.finishId} onChange={(e) => updateConnectorSpec(active.id, { finishId: e.target.value })}>
-                  {FINISH_OPTIONS.map((f) => (
-                    <option key={f.id} value={f.id}>{f.label} — {f.saltSprayHours}h</option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
                 <label>Pin count</label>
-                <input autoComplete="off" type="number" min={1} max={activeMax} value={active.pins.length} onChange={(e) => setPinCount(active.id, Number(e.target.value))} />
-                <span className="hint">max {activeMax} for this shell/contact combination</span>
+                <input autoComplete="off" type="number" min={1} value={active.pins.length} onChange={(e) => setPinCount(active.id, Number(e.target.value))} />
               </div>
             </div>
           </div>
@@ -285,7 +251,7 @@ export default function HarnessDesigner() {
             <div style={{ overflowX: 'auto' }}>
               <table className="data-table" style={{ width: '100%', fontSize: '0.78rem' }}>
                 <thead>
-                  <tr><th>Pin</th><th>Signal</th><th>Wire</th><th>AWG</th><th>Twisted w/</th><th>Destination</th></tr>
+                  <tr><th>Pin</th><th>Signal</th><th>Wire</th><th>AWG</th><th>Twisted w/</th><th>Shield</th><th>Destination</th></tr>
                 </thead>
                 <tbody>
                   {active.pins.map((p) => {
@@ -326,6 +292,18 @@ export default function HarnessDesigner() {
                         )}
                       </td>
                       <td>
+                        {pinHasShield(p) ? (
+                          <input
+                            type="checkbox"
+                            checked={!!p.shieldGrounded}
+                            onChange={(e) => updateShieldGrounded(active.id, p.pin, e.target.checked)}
+                            title="Tie this pin's cable shield/drain to chassis ground"
+                          />
+                        ) : (
+                          <span className="hint" title="Only available when this pin's wire construction has a shield (twisted shielded pair / shielded single)">—</span>
+                        )}
+                      </td>
+                      <td>
                         <select value={destValue(p.destination)} onChange={(e) => {
                           const v = e.target.value;
                           if (v === 'unused') updatePinDestination(active.id, p.pin, { kind: 'unused' });
@@ -340,10 +318,10 @@ export default function HarnessDesigner() {
                           {otherConnectors.map((oc) => (
                             <optgroup key={oc.id} label={oc.name}>
                               {oc.pins.map((op) => {
-                                const taken = isPinTaken(op, active.id, p.pin);
+                                const spliced = splicedCount(connectors, oc.id, op.pin, active.id, p.pin);
                                 return (
-                                  <option key={op.pin} value={`${oc.id}:${op.pin}`} style={taken ? { color: 'var(--text-faint)' } : undefined}>
-                                    {oc.name} pin {op.pin} ({op.signalName}){taken ? ' — in use' : ''}
+                                  <option key={op.pin} value={`${oc.id}:${op.pin}`}>
+                                    {oc.name} pin {op.pin} ({op.signalName}){spliced > 0 ? ` — splice (+${spliced} joined)` : ''}
                                   </option>
                                 );
                               })}
@@ -364,36 +342,33 @@ export default function HarnessDesigner() {
         <div>
           <div className="card">
             <div className="card-title">Results</div>
-            <div className={`status-banner ${overallPass ? 'pass' : 'fail'}`}>
-              {overallPass ? '✓ All connectors within pin budget' : '✗ One or more connectors exceed their pin budget — review below'}
-            </div>
             <div className="result-grid">
-              {pinCountValidations.map((v) => (
-                <div className="result-tile" key={v.id}>
-                  <div className="label">{v.name} pin utilization</div>
-                  <div className={`value ${v.valid ? 'pos' : 'neg'}`}>{v.used}/{v.max}</div>
-                </div>
-              ))}
               <div className="result-tile">
                 <div className="label">Nets</div>
                 <div className="value">{layout.wires.length + layout.grounds.length}</div>
-                <div className="hint">{layout.wires.length} pin-to-pin, {layout.grounds.length} ground</div>
+                <div className="hint">{layout.wires.length} pin-to-pin, {signalGroundCount} ground{shieldGroundCount > 0 ? `, ${shieldGroundCount} shield ground` : ''}</div>
               </div>
             </div>
           </div>
-
-          <div className="card">
-            <div className="card-title">Reference &amp; assumptions</div>
-            <p className="note">
-              Shell-size pin-count limits and contact-size current ratings are sourced from a real MIL-DTL-38999
-              Series III cross-reference catalog. Scope: one dominant contact size per connector (matches sizing
-              by pin count/wire gauge, not a mixed-size insert arrangement), and strictly one-to-one
-              point-to-point pin wiring — no multi-drop splices. The schematic is a point-to-point wiring diagram
-              (labelled connector boxes with numbered pins), not a to-scale connector face/pin-arrangement
-              drawing — verify final pin arrangement against the manufacturer's insert arrangement drawing.
-            </p>
-          </div>
         </div>
+      </div>
+
+      <div className="card" style={{ marginTop: '1.25rem' }}>
+        <div className="card-title">Reference &amp; assumptions</div>
+        <p className="note">
+          Contact-size current ratings are sourced from a real MIL-DTL-38999 Series III contact cross-reference
+          catalog. Scope: one dominant contact size per connector with a direct user-entered pin count (no
+          shell/insert-arrangement modelling). Multiple pins may point at the same target pin to form a
+          multi-drop splice — the schematic draws one shared filled junction dot at a single representative
+          anchor pin and a wire from every other spliced pin back to it, which is electrically equivalent to a
+          real splice but not a literal drawing of a splice sleeve/crimp at a separate mid-harness point. A pin
+          whose wire construction has a shield (twisted shielded pair / shielded single) can independently tie
+          that shield/drain to chassis ground — drawn as its own dashed "SHLD" stub, separate from that pin's
+          own signal destination and from a signal-conductor ground on the same pin. The schematic is a
+          point-to-point wiring diagram (labelled connector boxes with numbered pins), not a to-scale connector
+          face/pin-arrangement drawing — verify final pin arrangement against the manufacturer's insert
+          arrangement drawing.
+        </p>
       </div>
 
       <div className="card" style={{ marginTop: '1.25rem' }}>

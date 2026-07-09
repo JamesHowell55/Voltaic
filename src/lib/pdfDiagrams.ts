@@ -14,6 +14,8 @@ const TEXT_FAINT = '#9A9D95';
 const BORDER_STRONG = '#C8CBC5';
 const BLUE = '#0284C7';
 const WARN = '#CA8A04';
+const POS = '#16A34A';
+const NEG = '#DC2626';
 
 function escapeXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -578,6 +580,26 @@ function pdfPathWithHops(points: { x: number; y: number }[], hops: { x: number; 
   return d;
 }
 
+// Cycled by wire-spec index (see harnessSchematicLayout's legend), matching
+// HarnessSchematicDiagram.tsx's WIRE_PALETTE — accentColor stands in for the
+// live theme's var(--accent) since the PDF is always forced light-theme.
+function wireSpecPalette(accentColor: string): string[] {
+  return [
+    accentColor,
+    BLUE,
+    WARN,
+    POS,
+    NEG,
+    `color-mix(in srgb, ${BLUE} 55%, ${WARN})`,
+    `color-mix(in srgb, ${accentColor} 50%, ${BLUE})`,
+    `color-mix(in srgb, ${WARN} 50%, ${NEG})`,
+    `color-mix(in srgb, ${POS} 50%, ${BLUE})`,
+    `color-mix(in srgb, ${accentColor} 50%, ${NEG})`,
+    `color-mix(in srgb, ${POS} 50%, ${WARN})`,
+    `color-mix(in srgb, ${NEG} 50%, ${BLUE})`,
+  ];
+}
+
 /** Point-to-point wiring schematic, matching HarnessSchematicDiagram.tsx. */
 export function renderHarnessSchematicSvg(layout: SchematicLayout, accentColor: string): string {
   const connectedPins = new Set<string>();
@@ -586,18 +608,17 @@ export function renderHarnessSchematicSvg(layout: SchematicLayout, accentColor: 
   }
   for (const g of layout.grounds) connectedPins.add(`${g.connectorId}:${g.pin}`);
 
-  const wiresHtml = layout.wires.map((w) => `<g>
-      <path d="${pdfPathWithHops(w.points, w.hops)}" fill="none" stroke="${accentColor}" stroke-width="1.5" />
-      <rect x="${w.midX - w.label.length * 2.6}" y="${w.midY - 12}" width="${w.label.length * 5.2}" height="12" fill="white" opacity="0.9" />
-      <text x="${w.midX}" y="${w.midY - 3}" text-anchor="middle" font-size="8.5" fill="${TEXT_2}" font-family="ui-monospace, monospace">${escapeXml(w.label)}</text>
-    </g>`).join('');
+  const palette = wireSpecPalette(accentColor);
+  const colorForSpec = (i: number) => palette[i % palette.length];
+
+  const wiresHtml = layout.wires.map((w) => `<path d="${pdfPathWithHops(w.points, w.hops)}" fill="none" stroke="${colorForSpec(w.specIndex)}" stroke-width="1.5" />`).join('');
 
   const groundsHtml = layout.grounds.map((g) => `<g>
-    <path d="${pdfPathWithHops([{ x: g.stubX1, y: g.stubY1 }, { x: g.x, y: g.y }], g.hops)}" fill="none" stroke="${TEXT_2}" stroke-width="1.5" />
+    <path d="${pdfPathWithHops([{ x: g.stubX1, y: g.stubY1 }, { x: g.x, y: g.y }], g.hops)}" fill="none" stroke="${colorForSpec(g.specIndex)}" stroke-width="1.5"${g.kind === 'shield' ? ' stroke-dasharray="3,2"' : ''} />
     <line x1="${g.x}" y1="${g.y - 8}" x2="${g.x}" y2="${g.y + 8}" stroke="#14170F" stroke-width="1.5" />
     <line x1="${g.x + 4}" y1="${g.y - 5}" x2="${g.x + 4}" y2="${g.y + 5}" stroke="#14170F" stroke-width="1.3" />
     <line x1="${g.x + 8}" y1="${g.y - 2}" x2="${g.x + 8}" y2="${g.y + 2}" stroke="#14170F" stroke-width="1" />
-    <text x="${g.x + 12}" y="${g.y + 3}" font-size="8" fill="${TEXT_2}" font-family="ui-monospace, monospace">GND</text>
+    <text x="${g.x + 12}" y="${g.y + 3}" font-size="8" fill="${TEXT_2}" font-family="ui-monospace, monospace">${g.kind === 'shield' ? 'SHLD' : 'GND'}</text>
   </g>`).join('');
 
   const boxesHtml = layout.connectors.map((box) => {
@@ -605,10 +626,12 @@ export function renderHarnessSchematicSvg(layout: SchematicLayout, accentColor: 
       const connected = connectedPins.has(`${box.id}:${p.pin}`);
       const dotColor = connected ? accentColor : TEXT_FAINT;
       const textColor = connected ? '#14170F' : TEXT_FAINT;
+      const dotR = p.isSpliceAnchor ? 4.5 : 2.5;
+      const haloAttrs = p.isSpliceAnchor ? ` stroke="white" stroke-width="1"` : '';
       return `<g>
         <line x1="${box.x}" x2="${box.x + box.width}" y1="${p.y}" y2="${p.y}" stroke="${BORDER_STRONG}" stroke-width="0.5" />
-        <circle cx="${box.x}" cy="${p.y}" r="2.5" fill="${dotColor}" />
-        <circle cx="${box.x + box.width}" cy="${p.y}" r="2.5" fill="${dotColor}" />
+        <circle cx="${box.x}" cy="${p.y}" r="${dotR}" fill="${dotColor}"${haloAttrs} />
+        <circle cx="${box.x + box.width}" cy="${p.y}" r="${dotR}" fill="${dotColor}"${haloAttrs} />
         <text x="${box.x + 6}" y="${p.y + 3}" font-size="7.5" fill="${TEXT_FAINT}" font-family="ui-monospace, monospace">${p.pin}</text>
         <text x="${box.x + box.width / 2}" y="${p.y + 3}" text-anchor="middle" font-size="8" fill="${textColor}" font-family="ui-monospace, monospace">${escapeXml(p.signalName)}</text>
         <text x="${box.x + box.width - 6}" y="${p.y + 3}" text-anchor="end" font-size="7.5" fill="${TEXT_FAINT}" font-family="ui-monospace, monospace">${p.pin}</text>
@@ -636,16 +659,29 @@ export function renderHarnessSchematicSvg(layout: SchematicLayout, accentColor: 
       <rect x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" rx="4" fill="#FAFBFA" stroke="${BORDER_STRONG}" stroke-width="1.5" />
       <rect x="${box.x}" y="${box.y}" width="${box.width}" height="30" rx="4" fill="color-mix(in srgb, ${accentColor} 12%, white)" stroke="${BORDER_STRONG}" stroke-width="1" />
       <text x="${box.x + box.width / 2}" y="${box.y + 14}" text-anchor="middle" font-size="11" font-weight="700" fill="#14170F" font-family="ui-monospace, monospace">${escapeXml(box.name)}</text>
-      <text x="${box.x + box.width / 2}" y="${box.y + 25}" text-anchor="middle" font-size="8" fill="${TEXT_2}" font-family="ui-monospace, monospace">${escapeXml(box.shellLabel)}</text>
+      <text x="${box.x + box.width / 2}" y="${box.y + 25}" text-anchor="middle" font-size="8" fill="${TEXT_2}" font-family="ui-monospace, monospace">${escapeXml(box.subtitle)}</text>
       ${pinsHtml}
       ${twistHtml}
     </g>`;
   }).join('');
 
-  return `<svg viewBox="0 0 ${layout.width} ${layout.height}" width="100%">
+  const LEGEND_WIDTH = 190;
+  const legendHeading = layout.legend.length > 0
+    ? `<text x="${layout.width + 14}" y="10" font-size="8" font-weight="700" fill="${TEXT_2}" font-family="ui-monospace, monospace">WIRE SPEC KEY</text>`
+    : '';
+  const legendHtml = layout.legend.map((entry, i) => `<g>
+      <rect x="${layout.width + 14}" y="${20 + i * 16}" width="10" height="10" fill="${colorForSpec(i)}" />
+      <text x="${layout.width + 30}" y="${29 + i * 16}" font-size="8.5" fill="${TEXT_2}" font-family="ui-monospace, monospace">${escapeXml(entry.label)}</text>
+    </g>`).join('');
+  const totalWidth = layout.width + (layout.legend.length > 0 ? LEGEND_WIDTH : 0);
+  const totalHeight = Math.max(layout.height, 20 + layout.legend.length * 16 + 10);
+
+  return `<svg viewBox="0 0 ${totalWidth} ${totalHeight}" width="100%">
     ${wiresHtml}
     ${groundsHtml}
     ${boxesHtml}
+    ${legendHeading}
+    ${legendHtml}
   </svg>`;
 }
 

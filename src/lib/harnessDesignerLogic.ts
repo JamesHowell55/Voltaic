@@ -1,10 +1,13 @@
 // Pure data model + validation/net-extraction logic for the Harness Designer.
 //
-// Scope (disclosed in the UI): one dominant contact size per connector, and
-// strictly one-to-one point-to-point pin destinations (Unused / Ground / one
-// other connector's pin) — no multi-drop splices. Setting a pin's destination
-// always keeps both ends mutually consistent (see setPinDestination).
-import { maxContactsFor, CONTACT_SIZE_SPECS, type ContactSize } from './connectorLibrary';
+// Scope (disclosed in the UI): one dominant contact size per connector, a
+// direct user-entered pin count (no shell/insert-arrangement constraint),
+// and per-pin destinations of Unused / Ground / another connector's pin.
+// Multiple pins may point at the same target pin — that is a multi-drop
+// splice, not an error — so the destination graph is undirected and
+// extractNets groups it into connected components (see extractNets).
+import { CONTACT_SIZE_SPECS, type ContactSize } from './connectorLibrary';
+import { getWireConstruction } from './harnessWireTypes';
 
 export interface Destination {
   kind: 'unused' | 'ground' | 'pin';
@@ -24,30 +27,19 @@ export interface PinSpec {
    *  Kept mutually consistent by setTwistedPartner, mirroring how
    *  setPinDestination keeps pin-to-pin links consistent. */
   twistedWithPin?: number;
+  /** Whether this pin's cable shield/drain is tied to chassis ground — only
+   *  meaningful when constructionId's construction actually has a shield
+   *  (see pinHasShield). Independent of the pin's own signal destination:
+   *  a shielded conductor's two signal ends and its shield are three
+   *  separate electrical points. */
+  shieldGrounded?: boolean;
 }
 
 export interface ConnectorSpec {
   id: string;
   name: string;
-  shellSize: number;
-  connectorTypeId: string;
   contactSize: ContactSize;
-  finishId: string;
   pins: PinSpec[];
-}
-
-export function maxPinCountFor(connector: Pick<ConnectorSpec, 'shellSize' | 'contactSize'>): number {
-  return maxContactsFor(connector.shellSize, connector.contactSize);
-}
-
-export interface PinCountValidation {
-  valid: boolean;
-  used: number;
-  max: number;
-}
-export function validatePinCount(connector: ConnectorSpec): PinCountValidation {
-  const max = maxPinCountFor(connector);
-  return { valid: connector.pins.length <= max, used: connector.pins.length, max };
 }
 
 export interface Net {
@@ -55,31 +47,125 @@ export interface Net {
   kind: 'pinToPin' | 'pinToGround';
   a: { connectorId: string; pin: number };
   b: { connectorId: string; pin: number } | 'ground';
+  /** True when `a` is the shared anchor of a 3+-pin splice — the renderer
+   *  draws a filled junction dot there instead of a plain connection dot. */
+  isSpliceAnchor: boolean;
 }
 
-/** Walks every connector's pins and builds the net list. Pin-to-pin nets are
- *  deduplicated (each real connection appears once, keyed by its sorted
- *  endpoints) since setPinDestination keeps both ends mutually consistent. */
+function pinKey(connectorId: string, pin: number): string {
+  return `${connectorId}:${pin}`;
+}
+function parsePinKey(key: string): { connectorId: string; pin: number } {
+  const [connectorId, pinStr] = key.split(':');
+  return { connectorId, pin: Number(pinStr) };
+}
+
+/** Walks every connector's pins and builds the net list. A pin's destination
+ *  pointing at another pin is an undirected edge (multiple pins may point at
+ *  the same target — a splice), so pin-to-pin nets are found via connected
+ *  components (union-find) rather than simple pairwise dedup: a component of
+ *  exactly 2 pins is an ordinary point-to-point net, and a component of 3+ is
+ *  a multi-drop splice. Each splice picks one deterministic anchor member
+ *  (lowest connector order, then lowest pin number) and emits one edge from
+ *  every other member back to it — reusing the exact same point-to-point
+ *  rendering per spoke instead of needing real Steiner-tree routing. */
 export function extractNets(connectors: ConnectorSpec[]): Net[] {
   const nets: Net[] = [];
-  const seen = new Set<string>();
+  const connectorIndex = new Map(connectors.map((c, i) => [c.id, i]));
+
+  const parent = new Map<string, string>();
+  function find(x: string): string {
+    if (!parent.has(x)) parent.set(x, x);
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    let cur = x;
+    while (parent.get(cur) !== root) {
+      const next = parent.get(cur)!;
+      parent.set(cur, root);
+      cur = next;
+    }
+    return root;
+  }
+  function union(a: string, b: string) {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  }
+
+  const edges: [string, string][] = [];
   for (const c of connectors) {
     for (const p of c.pins) {
-      if (p.destination.kind === 'ground') {
-        nets.push({ id: `${c.id}-${p.pin}-gnd`, kind: 'pinToGround', a: { connectorId: c.id, pin: p.pin }, b: 'ground' });
-      } else if (p.destination.kind === 'pin' && p.destination.connectorId != null && p.destination.pin != null) {
-        const key = [`${c.id}:${p.pin}`, `${p.destination.connectorId}:${p.destination.pin}`].sort().join('|');
-        if (seen.has(key)) continue;
-        seen.add(key);
-        nets.push({ id: key, kind: 'pinToPin', a: { connectorId: c.id, pin: p.pin }, b: { connectorId: p.destination.connectorId, pin: p.destination.pin } });
+      if (p.destination.kind === 'pin' && p.destination.connectorId != null && p.destination.pin != null) {
+        const edge: [string, string] = [pinKey(c.id, p.pin), pinKey(p.destination.connectorId, p.destination.pin)];
+        edges.push(edge);
+        union(edge[0], edge[1]);
       }
     }
   }
+
+  const members = new Map<string, Set<string>>();
+  for (const [a, b] of edges) {
+    const root = find(a);
+    if (!members.has(root)) members.set(root, new Set());
+    members.get(root)!.add(a);
+    members.get(root)!.add(b);
+  }
+
+  const orderOf = (key: string): [number, number] => {
+    const { connectorId, pin } = parsePinKey(key);
+    return [connectorIndex.get(connectorId) ?? 0, pin];
+  };
+
+  for (const group of members.values()) {
+    if (group.size < 2) continue;
+    const sortedKeys = [...group].sort((x, y) => {
+      const [ox, px] = orderOf(x);
+      const [oy, py] = orderOf(y);
+      return ox !== oy ? ox - oy : px - py;
+    });
+    const anchorKey = sortedKeys[0];
+    const anchor = parsePinKey(anchorKey);
+    const isSpliceAnchor = sortedKeys.length > 2;
+    for (let i = 1; i < sortedKeys.length; i++) {
+      const member = parsePinKey(sortedKeys[i]);
+      nets.push({
+        id: [anchorKey, sortedKeys[i]].sort().join('|'),
+        kind: 'pinToPin',
+        a: anchor,
+        b: member,
+        isSpliceAnchor,
+      });
+    }
+  }
+
+  for (const c of connectors) {
+    for (const p of c.pins) {
+      if (p.destination.kind === 'ground') {
+        nets.push({ id: `${c.id}-${p.pin}-gnd`, kind: 'pinToGround', a: { connectorId: c.id, pin: p.pin }, b: 'ground', isSpliceAnchor: false });
+      }
+    }
+  }
+
   return nets;
 }
 
 function findPin(connectors: ConnectorSpec[], connectorId: string, pin: number): PinSpec | undefined {
   return connectors.find((c) => c.id === connectorId)?.pins.find((p) => p.pin === pin);
+}
+
+/** True when this pin's current wire construction actually has a shield
+ *  layer (twistedShieldedPair / shielded) — the shield-to-ground option only
+ *  makes sense for those, not a bare single conductor or unshielded twisted
+ *  pair/CAN bus. */
+export function pinHasShield(pin: PinSpec): boolean {
+  return (getWireConstruction(pin.constructionId).shieldAddMm ?? 0) > 0;
+}
+
+/** Immutably sets whether a pin's shield/drain is tied to ground. */
+export function setShieldGrounded(connectors: ConnectorSpec[], connectorId: string, pin: number, grounded: boolean): ConnectorSpec[] {
+  return connectors.map((c) => (c.id === connectorId
+    ? { ...c, pins: c.pins.map((p) => (p.pin === pin ? { ...p, shieldGrounded: grounded } : p)) }
+    : c));
 }
 
 /** A pin's signal name is considered "still at its default" (never
@@ -90,43 +176,28 @@ function isDefaultSignalName(pin: PinSpec): boolean {
   return pin.signalName === `SIG${pin.pin}`;
 }
 
-/** Immutably sets one pin's destination, keeping both ends of any pin-to-pin
- *  link mutually consistent: clears the old reciprocal link (if any), and if
- *  the new destination is itself already linked elsewhere, clears that link
- *  too before pointing it back at the pin being set. When a new pin-to-pin
- *  link is created, whichever end still has an un-renamed default signal
- *  name adopts the other end's name — a real point-to-point connection is a
- *  single logical signal, so both ends should read the same name — but a
- *  name the user has already deliberately typed on either end is never
- *  overwritten. */
+/** Immutably sets one pin's destination. Only this pin's OWN previous link is
+ *  touched — other pins already pointing at the same target are left alone,
+ *  which is exactly how a multi-drop splice is created (several pins all
+ *  pointing at, directly or transitively through, one another — see
+ *  extractNets). When the new target still has its default signal name and
+ *  this pin has already been renamed (or vice-versa), the default one adopts
+ *  the other's name — every pin touching one connection is one logical
+ *  signal, so they should read the same name — but a name the user has
+ *  already deliberately typed on either pin is never overwritten. */
 export function setPinDestination(connectors: ConnectorSpec[], fromConnectorId: string, fromPin: number, newDestination: Destination): ConnectorSpec[] {
   const next = connectors.map((c) => ({ ...c, pins: c.pins.map((p) => ({ ...p, destination: { ...p.destination } })) }));
 
   const from = findPin(next, fromConnectorId, fromPin);
   if (!from) return connectors;
 
-  if (from.destination.kind === 'pin' && from.destination.connectorId != null && from.destination.pin != null) {
-    const oldPartner = findPin(next, from.destination.connectorId, from.destination.pin);
-    if (oldPartner && oldPartner.destination.kind === 'pin' && oldPartner.destination.connectorId === fromConnectorId && oldPartner.destination.pin === fromPin) {
-      oldPartner.destination = { kind: 'unused' };
-    }
-  }
-
   if (newDestination.kind === 'pin' && newDestination.connectorId != null && newDestination.pin != null) {
-    const newPartner = findPin(next, newDestination.connectorId, newDestination.pin);
-    if (newPartner) {
-      if (newPartner.destination.kind === 'pin' && newPartner.destination.connectorId != null && newPartner.destination.pin != null) {
-        const itsOldPartner = findPin(next, newPartner.destination.connectorId, newPartner.destination.pin);
-        if (itsOldPartner && itsOldPartner.destination.kind === 'pin' && itsOldPartner.destination.connectorId === newDestination.connectorId && itsOldPartner.destination.pin === newDestination.pin) {
-          itsOldPartner.destination = { kind: 'unused' };
-        }
-      }
-      newPartner.destination = { kind: 'pin', connectorId: fromConnectorId, pin: fromPin };
-
-      if (isDefaultSignalName(newPartner) && !isDefaultSignalName(from)) {
-        newPartner.signalName = from.signalName;
-      } else if (isDefaultSignalName(from) && !isDefaultSignalName(newPartner)) {
-        from.signalName = newPartner.signalName;
+    const target = findPin(next, newDestination.connectorId, newDestination.pin);
+    if (target) {
+      if (isDefaultSignalName(target) && !isDefaultSignalName(from)) {
+        target.signalName = from.signalName;
+      } else if (isDefaultSignalName(from) && !isDefaultSignalName(target)) {
+        from.signalName = target.signalName;
       }
     }
   }
@@ -168,16 +239,11 @@ export function setTwistedPartner(connectors: ConnectorSpec[], connectorId: stri
   return next;
 }
 
-export function makeDefaultConnector(id: string, name: string, shellSize: number, contactSize: ContactSize): ConnectorSpec {
-  const maxPins = maxContactsFor(shellSize, contactSize);
-  const pinCount = Math.min(maxPins, 8);
+export function makeDefaultConnector(id: string, name: string, contactSize: ContactSize, pinCount = 8): ConnectorSpec {
   return {
     id,
     name,
-    shellSize,
-    connectorTypeId: 'jamNut',
     contactSize,
-    finishId: 'W',
     pins: Array.from({ length: pinCount }, (_, i) => ({
       pin: i + 1,
       signalName: `SIG${i + 1}`,
