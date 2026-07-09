@@ -18,7 +18,12 @@ export interface PinSpec {
   constructionId: string;
   awg: number;
   destination: Destination;
-  expectedCurrentA?: number;
+  /** Pin number (same connector only) this pin's twisted-pair conductor is
+   *  twisted with — only meaningful when constructionId's category is one of
+   *  the twistable categories (twistedPair / twistedShieldedPair / canBus).
+   *  Kept mutually consistent by setTwistedPartner, mirroring how
+   *  setPinDestination keeps pin-to-pin links consistent. */
+  twistedWithPin?: number;
 }
 
 export interface ConnectorSpec {
@@ -43,26 +48,6 @@ export interface PinCountValidation {
 export function validatePinCount(connector: ConnectorSpec): PinCountValidation {
   const max = maxPinCountFor(connector);
   return { valid: connector.pins.length <= max, used: connector.pins.length, max };
-}
-
-export interface CurrentRatingWarning {
-  connectorId: string;
-  connectorName: string;
-  pin: number;
-  expectedCurrentA: number;
-  ratedCurrentA: number;
-}
-export function checkCurrentRatings(connectors: ConnectorSpec[]): CurrentRatingWarning[] {
-  const warnings: CurrentRatingWarning[] = [];
-  for (const c of connectors) {
-    const rated = CONTACT_SIZE_SPECS[c.contactSize].currentRatingA;
-    for (const p of c.pins) {
-      if (p.expectedCurrentA != null && p.expectedCurrentA > rated) {
-        warnings.push({ connectorId: c.id, connectorName: c.name, pin: p.pin, expectedCurrentA: p.expectedCurrentA, ratedCurrentA: rated });
-      }
-    }
-  }
-  return warnings;
 }
 
 export interface Net {
@@ -97,10 +82,23 @@ function findPin(connectors: ConnectorSpec[], connectorId: string, pin: number):
   return connectors.find((c) => c.id === connectorId)?.pins.find((p) => p.pin === pin);
 }
 
+/** A pin's signal name is considered "still at its default" (never
+ *  deliberately renamed by the user) when it matches the SIG{pin} pattern
+ *  makeDefaultConnector assigns — used to decide which end's name should
+ *  propagate to the other when a new pin-to-pin link is made. */
+function isDefaultSignalName(pin: PinSpec): boolean {
+  return pin.signalName === `SIG${pin.pin}`;
+}
+
 /** Immutably sets one pin's destination, keeping both ends of any pin-to-pin
  *  link mutually consistent: clears the old reciprocal link (if any), and if
  *  the new destination is itself already linked elsewhere, clears that link
- *  too before pointing it back at the pin being set. */
+ *  too before pointing it back at the pin being set. When a new pin-to-pin
+ *  link is created, whichever end still has an un-renamed default signal
+ *  name adopts the other end's name — a real point-to-point connection is a
+ *  single logical signal, so both ends should read the same name — but a
+ *  name the user has already deliberately typed on either end is never
+ *  overwritten. */
 export function setPinDestination(connectors: ConnectorSpec[], fromConnectorId: string, fromPin: number, newDestination: Destination): ConnectorSpec[] {
   const next = connectors.map((c) => ({ ...c, pins: c.pins.map((p) => ({ ...p, destination: { ...p.destination } })) }));
 
@@ -124,10 +122,49 @@ export function setPinDestination(connectors: ConnectorSpec[], fromConnectorId: 
         }
       }
       newPartner.destination = { kind: 'pin', connectorId: fromConnectorId, pin: fromPin };
+
+      if (isDefaultSignalName(newPartner) && !isDefaultSignalName(from)) {
+        newPartner.signalName = from.signalName;
+      } else if (isDefaultSignalName(from) && !isDefaultSignalName(newPartner)) {
+        from.signalName = newPartner.signalName;
+      }
     }
   }
 
   from.destination = newDestination;
+  return next;
+}
+
+/** Immutably links two pins on the SAME connector as a twisted pair, mirroring
+ *  setPinDestination's mutual-consistency approach: clears the old reciprocal
+ *  link (if any) on both the pin being set and whatever the new partner was
+ *  previously twisted with, then points both ends at each other. Pass
+ *  partnerPin=null to clear the link entirely. */
+export function setTwistedPartner(connectors: ConnectorSpec[], connectorId: string, pin: number, partnerPin: number | null): ConnectorSpec[] {
+  const next = connectors.map((c) => (c.id === connectorId ? { ...c, pins: c.pins.map((p) => ({ ...p })) } : c));
+  const conn = next.find((c) => c.id === connectorId);
+  if (!conn) return connectors;
+
+  const from = conn.pins.find((p) => p.pin === pin);
+  if (!from) return connectors;
+
+  if (from.twistedWithPin != null) {
+    const oldPartner = conn.pins.find((p) => p.pin === from.twistedWithPin);
+    if (oldPartner && oldPartner.twistedWithPin === pin) oldPartner.twistedWithPin = undefined;
+  }
+
+  if (partnerPin != null) {
+    const newPartner = conn.pins.find((p) => p.pin === partnerPin);
+    if (newPartner) {
+      if (newPartner.twistedWithPin != null) {
+        const itsOldPartner = conn.pins.find((p) => p.pin === newPartner.twistedWithPin);
+        if (itsOldPartner && itsOldPartner.twistedWithPin === partnerPin) itsOldPartner.twistedWithPin = undefined;
+      }
+      newPartner.twistedWithPin = pin;
+    }
+  }
+
+  from.twistedWithPin = partnerPin ?? undefined;
   return next;
 }
 

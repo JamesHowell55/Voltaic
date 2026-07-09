@@ -548,6 +548,36 @@ export function renderBundleCrossSectionSvg(
   </svg>`;
 }
 
+const HOP_R = 5;
+
+/** Builds an SVG path string for an orthogonal polyline, matching
+ *  pathWithHops in HarnessSchematicDiagram.tsx — inserts a small semicircular
+ *  "hop" bump on any horizontal segment where a different net's wire crosses
+ *  it without connecting. */
+function pdfPathWithHops(points: { x: number; y: number }[], hops: { x: number; y: number }[]): string {
+  if (points.length < 2) return '';
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    if (p1.y === p2.y) {
+      const leftToRight = p2.x > p1.x;
+      const segHops = hops
+        .filter((h) => h.y === p1.y && h.x > Math.min(p1.x, p2.x) && h.x < Math.max(p1.x, p2.x))
+        .sort((a, b) => (leftToRight ? a.x - b.x : b.x - a.x));
+      for (const hop of segHops) {
+        const nearX = leftToRight ? hop.x - HOP_R : hop.x + HOP_R;
+        const farX = leftToRight ? hop.x + HOP_R : hop.x - HOP_R;
+        d += ` L ${nearX} ${p1.y} A ${HOP_R} ${HOP_R} 0 0 ${leftToRight ? 1 : 0} ${farX} ${p1.y}`;
+      }
+      d += ` L ${p2.x} ${p2.y}`;
+    } else {
+      d += ` L ${p2.x} ${p2.y}`;
+    }
+  }
+  return d;
+}
+
 /** Point-to-point wiring schematic, matching HarnessSchematicDiagram.tsx. */
 export function renderHarnessSchematicSvg(layout: SchematicLayout, accentColor: string): string {
   const connectedPins = new Set<string>();
@@ -556,18 +586,14 @@ export function renderHarnessSchematicSvg(layout: SchematicLayout, accentColor: 
   }
   for (const g of layout.grounds) connectedPins.add(`${g.connectorId}:${g.pin}`);
 
-  const wiresHtml = layout.wires.map((w) => {
-    const midX = (w.x1 + w.x2) / 2;
-    const midY = (w.y1 + w.y2) / 2;
-    return `<g>
-      <line x1="${w.x1}" y1="${w.y1}" x2="${w.x2}" y2="${w.y2}" stroke="${accentColor}" stroke-width="1.5" />
-      <rect x="${midX - w.label.length * 2.6}" y="${midY - 12}" width="${w.label.length * 5.2}" height="12" fill="white" opacity="0.9" />
-      <text x="${midX}" y="${midY - 3}" text-anchor="middle" font-size="8.5" fill="${TEXT_2}" font-family="ui-monospace, monospace">${escapeXml(w.label)}</text>
-    </g>`;
-  }).join('');
+  const wiresHtml = layout.wires.map((w) => `<g>
+      <path d="${pdfPathWithHops(w.points, w.hops)}" fill="none" stroke="${accentColor}" stroke-width="1.5" />
+      <rect x="${w.midX - w.label.length * 2.6}" y="${w.midY - 12}" width="${w.label.length * 5.2}" height="12" fill="white" opacity="0.9" />
+      <text x="${w.midX}" y="${w.midY - 3}" text-anchor="middle" font-size="8.5" fill="${TEXT_2}" font-family="ui-monospace, monospace">${escapeXml(w.label)}</text>
+    </g>`).join('');
 
   const groundsHtml = layout.grounds.map((g) => `<g>
-    <line x1="${g.stubX1}" y1="${g.stubY1}" x2="${g.x}" y2="${g.y}" stroke="${TEXT_2}" stroke-width="1.5" />
+    <path d="${pdfPathWithHops([{ x: g.stubX1, y: g.stubY1 }, { x: g.x, y: g.y }], g.hops)}" fill="none" stroke="${TEXT_2}" stroke-width="1.5" />
     <line x1="${g.x}" y1="${g.y - 8}" x2="${g.x}" y2="${g.y + 8}" stroke="#14170F" stroke-width="1.5" />
     <line x1="${g.x + 4}" y1="${g.y - 5}" x2="${g.x + 4}" y2="${g.y + 5}" stroke="#14170F" stroke-width="1.3" />
     <line x1="${g.x + 8}" y1="${g.y - 2}" x2="${g.x + 8}" y2="${g.y + 2}" stroke="#14170F" stroke-width="1" />
@@ -588,12 +614,31 @@ export function renderHarnessSchematicSvg(layout: SchematicLayout, accentColor: 
         <text x="${box.x + box.width - 6}" y="${p.y + 3}" text-anchor="end" font-size="7.5" fill="${TEXT_FAINT}" font-family="ui-monospace, monospace">${p.pin}</text>
       </g>`;
     }).join('');
+
+    const twistPairs: { pinA: number; pinB: number; yA: number; yB: number }[] = [];
+    for (const p of box.pins) {
+      if (p.twistedWithPin != null && p.twistedWithPin > p.pin) {
+        const partner = box.pins.find((o) => o.pin === p.twistedWithPin);
+        if (partner) twistPairs.push({ pinA: p.pin, pinB: partner.pin, yA: p.y, yB: partner.y });
+      }
+    }
+    const twistHtml = twistPairs.map((tp) => {
+      const bx = box.x + box.width + 5;
+      const midY = (tp.yA + tp.yB) / 2;
+      const zigzag = [-4, 0, 4].map((dy) => `<path d="M ${bx - 3} ${midY + dy - 2} L ${bx + 3} ${midY + dy} L ${bx - 3} ${midY + dy + 2}" fill="none" stroke="${BLUE}" stroke-width="1" />`).join('');
+      return `<g>
+        <path d="M ${box.x + box.width} ${tp.yA} L ${bx} ${tp.yA} L ${bx} ${tp.yB} L ${box.x + box.width} ${tp.yB}" fill="none" stroke="${BLUE}" stroke-width="1.2" />
+        ${zigzag}
+      </g>`;
+    }).join('');
+
     return `<g>
       <rect x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" rx="4" fill="#FAFBFA" stroke="${BORDER_STRONG}" stroke-width="1.5" />
       <rect x="${box.x}" y="${box.y}" width="${box.width}" height="30" rx="4" fill="color-mix(in srgb, ${accentColor} 12%, white)" stroke="${BORDER_STRONG}" stroke-width="1" />
       <text x="${box.x + box.width / 2}" y="${box.y + 14}" text-anchor="middle" font-size="11" font-weight="700" fill="#14170F" font-family="ui-monospace, monospace">${escapeXml(box.name)}</text>
       <text x="${box.x + box.width / 2}" y="${box.y + 25}" text-anchor="middle" font-size="8" fill="${TEXT_2}" font-family="ui-monospace, monospace">${escapeXml(box.shellLabel)}</text>
       ${pinsHtml}
+      ${twistHtml}
     </g>`;
   }).join('');
 

@@ -11,21 +11,30 @@ import {
   availableContactSizes, type ContactSize,
 } from '../lib/connectorLibrary';
 import {
-  makeDefaultConnector, validatePinCount, checkCurrentRatings, setPinDestination, maxPinCountFor,
-  type ConnectorSpec, type Destination,
+  makeDefaultConnector, validatePinCount, setPinDestination, setTwistedPartner, maxPinCountFor,
+  type ConnectorSpec, type Destination, type PinSpec,
 } from '../lib/harnessDesignerLogic';
 import { buildSchematicLayout } from '../lib/harnessSchematicLayout';
-import { WIRE_CONSTRUCTIONS, getWireConstruction } from '../lib/harnessWireTypes';
+import { WIRE_CONSTRUCTIONS, getWireConstruction, type WireCategory } from '../lib/harnessWireTypes';
 
-function fmt(n: number, digits = 2): string {
-  if (!isFinite(n)) return '—';
-  return n.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
+const TWISTABLE_CATEGORIES: WireCategory[] = ['twistedPair', 'twistedShieldedPair', 'canBus'];
+function isTwistable(constructionId: string): boolean {
+  return TWISTABLE_CATEGORIES.includes(getWireConstruction(constructionId).category);
 }
 
 function destValue(d: Destination): string {
   if (d.kind === 'unused') return 'unused';
   if (d.kind === 'ground') return 'ground';
   return `${d.connectorId}:${d.pin}`;
+}
+
+/** A destination pin already claimed by some OTHER pin (not the one whose
+ *  dropdown we're rendering) — used to visually dim already-taken options
+ *  without blocking the user from re-picking them (setPinDestination already
+ *  handles "stealing" a taken pin cleanly). */
+function isPinTaken(candidate: PinSpec, editingConnectorId: string, editingPin: number): boolean {
+  return candidate.destination.kind === 'pin'
+    && !(candidate.destination.connectorId === editingConnectorId && candidate.destination.pin === editingPin);
 }
 
 let nextConnectorId = 3;
@@ -93,7 +102,7 @@ export default function HarnessDesigner() {
     }));
   };
 
-  const updatePin = (connectorId: string, pin: number, patch: Partial<{ signalName: string; constructionId: string; awg: number; expectedCurrentA: number | undefined }>) => {
+  const updatePin = (connectorId: string, pin: number, patch: Partial<{ signalName: string; constructionId: string; awg: number }>) => {
     setConnectors((cs) => cs.map((c) => (c.id === connectorId ? { ...c, pins: c.pins.map((p) => (p.pin === pin ? { ...p, ...patch } : p)) } : c)));
   };
 
@@ -101,10 +110,13 @@ export default function HarnessDesigner() {
     setConnectors((cs) => setPinDestination(cs, connectorId, pin, destination));
   };
 
+  const updateTwistedPartner = (connectorId: string, pin: number, partnerPin: number | null) => {
+    setConnectors((cs) => setTwistedPartner(cs, connectorId, pin, partnerPin));
+  };
+
   const pinCountValidations = useMemo(() => connectors.map((c) => ({ id: c.id, name: c.name, ...validatePinCount(c) })), [connectors]);
-  const currentWarnings = useMemo(() => checkCurrentRatings(connectors), [connectors]);
   const layout = useMemo(() => buildSchematicLayout(connectors), [connectors]);
-  const overallPass = pinCountValidations.every((v) => v.valid) && currentWarnings.length === 0;
+  const overallPass = pinCountValidations.every((v) => v.valid);
 
   const calculationSteps: CalcStepData[] = useMemo(() => [
     {
@@ -114,18 +126,12 @@ export default function HarnessDesigner() {
       result: pinCountValidations.every((v) => v.valid) ? 'All connectors within their pin budget' : 'One or more connectors exceed their pin budget',
     },
     {
-      title: 'Per-pin current rating',
-      formula: 'expected current (if entered) ≤ the contact size\'s rated current (5/7.5/13/23 A for #22D/#20/#16/#12)',
-      substitution: `${connectors.reduce((a, c) => a + c.pins.filter((p) => p.expectedCurrentA != null).length, 0)} pin(s) with an expected current entered`,
-      result: currentWarnings.length === 0 ? 'No current-rating warnings' : currentWarnings.map((w) => `${w.connectorName} pin ${w.pin}: ${w.expectedCurrentA} A requested vs ${w.ratedCurrentA} A rated`).join('; '),
-    },
-    {
       title: 'Net extraction',
       formula: 'Every pin\'s destination (Unused / Ground / another connector\'s pin) is walked into a deduplicated net list; wiring is strictly one-to-one point-to-point (no multi-drop splices in this tool)',
       substitution: `${connectors.length} connector(s), ${connectors.reduce((a, c) => a + c.pins.length, 0)} total pins`,
       result: `${layout.wires.length} pin-to-pin net(s), ${layout.grounds.length} ground connection(s)`,
     },
-  ], [pinCountValidations, currentWarnings, connectors, layout]);
+  ], [pinCountValidations, connectors, layout]);
 
   const inputSections: ReportSection[] = useMemo(() => connectors.map((c) => {
     const rows: ReportRow[] = [
@@ -135,7 +141,7 @@ export default function HarnessDesigner() {
       { label: 'Pin utilization', value: `${c.pins.length}/${maxPinCountFor(c)}` },
       ...c.pins.map((p): ReportRow => ({
         label: `Pin ${p.pin} — ${p.signalName}`,
-        value: `${p.awg} AWG ${getWireConstruction(p.constructionId).label} → ${p.destination.kind === 'unused' ? 'Unused' : p.destination.kind === 'ground' ? 'Ground/chassis' : `${connectors.find((o) => o.id === p.destination.connectorId)?.name ?? '?'} pin ${p.destination.pin}`}`,
+        value: `${p.awg} AWG ${getWireConstruction(p.constructionId).label}${p.twistedWithPin != null ? ` (twisted w/ pin ${p.twistedWithPin})` : ''} → ${p.destination.kind === 'unused' ? 'Unused' : p.destination.kind === 'ground' ? 'Ground/chassis' : `${connectors.find((o) => o.id === p.destination.connectorId)?.name ?? '?'} pin ${p.destination.pin}`}`,
       })),
     ];
     return { heading: `Connector ${c.name}`, rows };
@@ -146,18 +152,17 @@ export default function HarnessDesigner() {
       heading: 'Validation summary',
       rows: [
         ...pinCountValidations.map((v): ReportRow => ({ label: `${v.name} pin budget`, value: `${v.used}/${v.max} — ${v.valid ? 'OK' : 'EXCEEDS BUDGET'}` })),
-        { label: 'Current-rating warnings', value: currentWarnings.length === 0 ? 'None' : currentWarnings.map((w) => `${w.connectorName} pin ${w.pin} (${w.expectedCurrentA} A > ${w.ratedCurrentA} A)`).join('; ') },
         { label: 'Nets', value: `${layout.wires.length} pin-to-pin, ${layout.grounds.length} ground` },
       ],
     },
-  ], [pinCountValidations, currentWarnings, layout]);
+  ], [pinCountValidations, layout]);
 
   const handleExportPdf = () => {
     exportReportToPdf({
       tabName: 'Harness_Designer',
       pageTitle: 'Harness Designer',
       accentHex,
-      passStatus: { pass: overallPass, label: overallPass ? 'All connectors within pin budget and current ratings' : 'One or more connectors exceed pin budget or current rating — review' },
+      passStatus: { pass: overallPass, label: overallPass ? 'All connectors within pin budget' : 'One or more connectors exceed pin budget — review' },
       inputSections,
       outputSections,
       calculationSteps,
@@ -280,10 +285,13 @@ export default function HarnessDesigner() {
             <div style={{ overflowX: 'auto' }}>
               <table className="data-table" style={{ width: '100%', fontSize: '0.78rem' }}>
                 <thead>
-                  <tr><th>Pin</th><th>Signal</th><th>Wire</th><th>AWG</th><th>I (A)</th><th>Destination</th></tr>
+                  <tr><th>Pin</th><th>Signal</th><th>Wire</th><th>AWG</th><th>Twisted w/</th><th>Destination</th></tr>
                 </thead>
                 <tbody>
-                  {active.pins.map((p) => (
+                  {active.pins.map((p) => {
+                    const twistable = isTwistable(p.constructionId);
+                    const twistCandidates = active.pins.filter((op) => op.pin !== p.pin && isTwistable(op.constructionId));
+                    return (
                     <tr key={p.pin}>
                       <td>{p.pin}</td>
                       <td><input autoComplete="off" value={p.signalName} onChange={(e) => updatePin(active.id, p.pin, { signalName: e.target.value })} style={{ width: '90px', fontSize: '0.78rem' }} /></td>
@@ -302,7 +310,20 @@ export default function HarnessDesigner() {
                         </select>
                       </td>
                       <td>
-                        <input autoComplete="off" type="number" min={0} value={p.expectedCurrentA ?? ''} onChange={(e) => updatePin(active.id, p.pin, { expectedCurrentA: e.target.value === '' ? undefined : Number(e.target.value) })} style={{ width: '55px', fontSize: '0.75rem' }} />
+                        {twistable ? (
+                          <select
+                            value={p.twistedWithPin ?? ''}
+                            onChange={(e) => updateTwistedPartner(active.id, p.pin, e.target.value === '' ? null : Number(e.target.value))}
+                            style={{ fontSize: '0.75rem' }}
+                          >
+                            <option value="">None</option>
+                            {twistCandidates.map((op) => (
+                              <option key={op.pin} value={op.pin}>Pin {op.pin} ({op.signalName})</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="hint" title="Only available when this pin's wire construction is a twisted-pair category">—</span>
+                        )}
                       </td>
                       <td>
                         <select value={destValue(p.destination)} onChange={(e) => {
@@ -318,15 +339,21 @@ export default function HarnessDesigner() {
                           <option value="ground">Ground / chassis</option>
                           {otherConnectors.map((oc) => (
                             <optgroup key={oc.id} label={oc.name}>
-                              {oc.pins.map((op) => (
-                                <option key={op.pin} value={`${oc.id}:${op.pin}`}>{oc.name} pin {op.pin} ({op.signalName})</option>
-                              ))}
+                              {oc.pins.map((op) => {
+                                const taken = isPinTaken(op, active.id, p.pin);
+                                return (
+                                  <option key={op.pin} value={`${oc.id}:${op.pin}`} style={taken ? { color: 'var(--text-faint)' } : undefined}>
+                                    {oc.name} pin {op.pin} ({op.signalName}){taken ? ' — in use' : ''}
+                                  </option>
+                                );
+                              })}
                             </optgroup>
                           ))}
                         </select>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -338,7 +365,7 @@ export default function HarnessDesigner() {
           <div className="card">
             <div className="card-title">Results</div>
             <div className={`status-banner ${overallPass ? 'pass' : 'fail'}`}>
-              {overallPass ? '✓ All connectors within pin budget and current ratings' : '✗ Review pin budget or current-rating warnings below'}
+              {overallPass ? '✓ All connectors within pin budget' : '✗ One or more connectors exceed their pin budget — review below'}
             </div>
             <div className="result-grid">
               {pinCountValidations.map((v) => (
@@ -353,11 +380,6 @@ export default function HarnessDesigner() {
                 <div className="hint">{layout.wires.length} pin-to-pin, {layout.grounds.length} ground</div>
               </div>
             </div>
-            {currentWarnings.length > 0 && (
-              <p className="note" style={{ color: 'var(--warn)', marginTop: '0.75rem' }}>
-                {currentWarnings.map((w) => `${w.connectorName} pin ${w.pin}: ${fmt(w.expectedCurrentA, 1)} A requested exceeds the ${fmt(w.ratedCurrentA, 1)} A contact rating.`).join(' ')}
-              </p>
-            )}
           </div>
 
           <div className="card">
