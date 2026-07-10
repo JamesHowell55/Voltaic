@@ -616,11 +616,6 @@ export function renderHarnessSchematicSvg(layout: SchematicLayout, accentColor: 
 
   const wiresHtml = layout.wires.map((w) => `<path d="${pdfPathWithHops(w.points, w.hops)}" fill="none" stroke="${colorForSpec(w.specIndex)}" stroke-width="1.5" />`).join('');
 
-  const bundledPins = new Set<string>();
-  for (const b of layout.twistBundles) {
-    for (const netId of [b.netIdA, b.netIdB]) for (const part of netId.split('|')) bundledPins.add(part);
-  }
-
   const twistHtml = layout.twistBundles.map((b) => b.crossings.map((c) =>
     `<line x1="${c.x1}" y1="${c.y1}" x2="${c.x2}" y2="${c.y2}" stroke="${TEXT_2}" stroke-width="1" />`
   ).join('')).join('');
@@ -659,30 +654,12 @@ export function renderHarnessSchematicSvg(layout: SchematicLayout, accentColor: 
       </g>`;
     }).join('');
 
-    const twistPairs: { pinA: number; pinB: number; yA: number; yB: number }[] = [];
-    for (const p of box.pins) {
-      if (p.twistedWithPin != null && p.twistedWithPin > p.pin && !bundledPins.has(`${box.id}:${p.pin}`)) {
-        const partner = box.pins.find((o) => o.pin === p.twistedWithPin);
-        if (partner) twistPairs.push({ pinA: p.pin, pinB: partner.pin, yA: p.y, yB: partner.y });
-      }
-    }
-    const twistBracketHtml = twistPairs.map((tp) => {
-      const bx = box.x + box.width + 5;
-      const midY = (tp.yA + tp.yB) / 2;
-      const zigzag = [-4, 0, 4].map((dy) => `<path d="M ${bx - 3} ${midY + dy - 2} L ${bx + 3} ${midY + dy} L ${bx - 3} ${midY + dy + 2}" fill="none" stroke="${BLUE}" stroke-width="1" />`).join('');
-      return `<g>
-        <path d="M ${box.x + box.width} ${tp.yA} L ${bx} ${tp.yA} L ${bx} ${tp.yB} L ${box.x + box.width} ${tp.yB}" fill="none" stroke="${BLUE}" stroke-width="1.2" />
-        ${zigzag}
-      </g>`;
-    }).join('');
-
     return `<g>
       <rect x="${box.x}" y="${box.y}" width="${box.width}" height="${box.height}" rx="4" fill="#FAFBFA" stroke="${BORDER_STRONG}" stroke-width="1.5" />
       <rect x="${box.x}" y="${box.y}" width="${box.width}" height="30" rx="4" fill="color-mix(in srgb, ${accentColor} 12%, white)" stroke="${BORDER_STRONG}" stroke-width="1" />
       <text x="${box.x + box.width / 2}" y="${box.y + 14}" text-anchor="middle" font-size="11" font-weight="700" fill="#14170F" font-family="ui-monospace, monospace">${escapeXml(box.name)}</text>
       <text x="${box.x + box.width / 2}" y="${box.y + 25}" text-anchor="middle" font-size="8" fill="${TEXT_2}" font-family="ui-monospace, monospace">${escapeXml(box.subtitle)}</text>
       ${pinsHtml}
-      ${twistBracketHtml}
     </g>`;
   }).join('');
 

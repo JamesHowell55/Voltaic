@@ -7,16 +7,12 @@ import HarnessSchematicDiagram from '../components/HarnessSchematicDiagram';
 import { renderHarnessSchematicSvg } from '../lib/pdfDiagrams';
 import { CONTACT_SIZE_SPECS, CONTACT_SIZES, type ContactSize } from '../lib/connectorLibrary';
 import {
-  makeDefaultConnector, setPinDestination, setTwistedPartner, setShieldDrain, getShieldTargets, pruneDanglingShieldDrains,
+  makeDefaultConnector, setPinDestination, setTwistedPartner, setShieldDrain, getShieldTargets,
+  applyPinSpec, isTwistable, pruneDanglingShieldDrains, pruneInvalidTwists, DEFAULT_CONSTRUCTION_ID,
   type ConnectorSpec, type Destination,
 } from '../lib/harnessDesignerLogic';
 import { buildSchematicLayout } from '../lib/harnessSchematicLayout';
-import { WIRE_CONSTRUCTIONS, getWireConstruction, type WireCategory } from '../lib/harnessWireTypes';
-
-const TWISTABLE_CATEGORIES: WireCategory[] = ['twistedPair', 'twistedShieldedPair', 'canBus'];
-function isTwistable(constructionId: string): boolean {
-  return TWISTABLE_CATEGORIES.includes(getWireConstruction(constructionId).category);
-}
+import { WIRE_CONSTRUCTIONS, getWireConstruction } from '../lib/harnessWireTypes';
 
 function destValue(d: Destination): string {
   if (d.kind === 'unused') return 'unused';
@@ -85,29 +81,43 @@ export default function HarnessDesigner() {
   };
 
   const setPinCount = (id: string, count: number) => {
-    setConnectors((cs) => cs.map((c) => {
-      if (c.id !== id) return c;
+    setConnectors((cs) => {
+      const conn = cs.find((c) => c.id === id);
+      if (!conn) return cs;
       const target = Math.max(1, Math.min(Math.round(count), 128));
-      if (target === c.pins.length) return c;
-      if (target < c.pins.length) return pruneDanglingShieldDrains({ ...c, pins: c.pins.slice(0, target) });
-      const awg = CONTACT_SIZE_SPECS[c.contactSize].awgRange[0];
-      const newPins = [...c.pins];
-      for (let i = c.pins.length; i < target; i++) {
-        newPins.push({ pin: i + 1, signalName: `SIG${i + 1}`, constructionId: 'm22759-32', awg, destination: { kind: 'unused' } });
+      if (target === conn.pins.length) return cs;
+      if (target > conn.pins.length) {
+        const awg = CONTACT_SIZE_SPECS[conn.contactSize].awgRange[0];
+        const newPins = [...conn.pins];
+        for (let i = conn.pins.length; i < target; i++) {
+          newPins.push({ pin: i + 1, signalName: `SIG${i + 1}`, constructionId: DEFAULT_CONSTRUCTION_ID, awg, destination: { kind: 'unused' } });
+        }
+        return cs.map((c) => (c.id === id ? { ...c, pins: newPins } : c));
       }
-      return { ...c, pins: newPins };
-    }));
+      // Shrinking: drop the rows, then clear everything that referenced the
+      // removed pins — other connectors' destinations pointing at them, and
+      // this connector's twist links / shield drains left dangling.
+      return cs.map((c) => {
+        if (c.id === id) return pruneDanglingShieldDrains(pruneInvalidTwists({ ...c, pins: c.pins.slice(0, target) }));
+        return {
+          ...c,
+          pins: c.pins.map((p) => (p.destination.kind === 'pin' && p.destination.connectorId === id && (p.destination.pin ?? 0) > target
+            ? { ...p, destination: { kind: 'unused' as const } }
+            : p)),
+        };
+      });
+    });
   };
 
   const updatePin = (connectorId: string, pin: number, patch: Partial<{ signalName: string; constructionId: string; awg: number }>) => {
-    setConnectors((cs) => cs.map((c) => {
-      if (c.id !== connectorId) return c;
-      const next = { ...c, pins: c.pins.map((p) => (p.pin === pin ? { ...p, ...patch } : p)) };
-      // A construction change can drop a pin's shield (invalidating any
-      // other pin's drain assignment pointing at it) or change which AWG
-      // values are valid — the shield-drain prune below handles the former.
-      return patch.constructionId !== undefined ? pruneDanglingShieldDrains(next) : next;
-    }));
+    // Construction/AWG describe the whole physical wire, so those edits go
+    // through applyPinSpec, which propagates them to the wire's other end
+    // (and across splices) and prunes twist/drain refs they invalidate.
+    if (patch.constructionId !== undefined || patch.awg !== undefined) {
+      setConnectors((cs) => applyPinSpec(cs, connectorId, pin, patch));
+      return;
+    }
+    setConnectors((cs) => cs.map((c) => (c.id === connectorId ? { ...c, pins: c.pins.map((p) => (p.pin === pin ? { ...p, ...patch } : p)) } : c)));
   };
 
   const updatePinDestination = (connectorId: string, pin: number, destination: Destination) => {
@@ -115,7 +125,7 @@ export default function HarnessDesigner() {
   };
 
   const updateTwistedPartner = (connectorId: string, pin: number, partnerPin: number | null) => {
-    setConnectors((cs) => setTwistedPartner(cs, connectorId, pin, partnerPin).map((c) => (c.id === connectorId ? pruneDanglingShieldDrains(c) : c)));
+    setConnectors((cs) => setTwistedPartner(cs, connectorId, pin, partnerPin));
   };
 
   const updateShieldDrain = (connectorId: string, drainPin: number, targetPin: number | null) => {
@@ -169,7 +179,7 @@ export default function HarnessDesigner() {
       diagrams: [
         { title: 'Wiring schematic', svgMarkup: renderHarnessSchematicSvg(layout, accentHex) },
       ],
-      disclaimer: 'Engineering design tool for connector pinout and wiring planning. Contact-size current ratings are sourced from a real MIL-DTL-38999 Series III contact cross-reference catalog; this tool scopes to a single dominant contact size and a direct user-entered pin count per connector. Multiple pins may point at the same target pin to form a multi-drop splice, drawn as a filled junction dot at one representative anchor pin with a wire from every other spliced pin back to it (electrically equivalent to a real splice, not a literal drawing of a splice sleeve/crimp at a separate mid-harness point). A twisted pair routed straight between two connectors is drawn with its two conductors visibly crossing over each other along the run, the standard drafting convention for a twist. A shielded conductor or twisted pair can be assigned its own drain-wire pin (a real, separately-wired pin, not an abstract flag), drawn as an oval shield marker around the conductor(s) at each end of the run with a 90° tap to the drain pin\'s own position — a symbolic marker, not a to-scale cable jacket drawing. The generated schematic is a point-to-point wiring diagram (connectors as labelled boxes with numbered pins), not a to-scale connector face/pin-arrangement drawing — verify final pin arrangement against the manufacturer\'s insert arrangement drawing before cutting a harness.',
+      disclaimer: 'Engineering design tool for connector pinout and wiring planning. Contact-size current ratings are sourced from a real MIL-DTL-38999 Series III contact cross-reference catalog; this tool scopes to a single dominant contact size and a direct user-entered pin count per connector. Multiple pins may point at the same target pin to form a multi-drop splice, drawn as a filled junction dot at one representative anchor pin with a wire from every other spliced pin back to it (electrically equivalent to a real splice, not a literal drawing of a splice sleeve/crimp at a separate mid-harness point). A twisted pair routed straight between two connectors is drawn with its two conductors visibly crossing over each other along the run, the standard drafting convention for a twist. Wire construction, gauge, and twisted-pair links describe the whole physical wire and are synchronized across both ends automatically — they can be specified at either connector. A shielded conductor or twisted pair can be assigned its own drain-wire pin (a real, separately-wired pin, not an abstract flag), drawn as an oval shield marker around the conductor(s) at each end of the run with a 90° tap to the drain pin\'s own position — a symbolic marker, not a to-scale cable jacket drawing. The generated schematic is a point-to-point wiring diagram (connectors as labelled boxes with numbered pins), not a to-scale connector face/pin-arrangement drawing — verify final pin arrangement against the manufacturer\'s insert arrangement drawing before cutting a harness.',
       ...branding,
     });
   };
@@ -369,9 +379,12 @@ export default function HarnessDesigner() {
           real splice but not a literal drawing of a splice sleeve/crimp at a separate mid-harness point. A
           twisted pair routed straight between two connectors is drawn with its two conductors visibly crossing
           over each other along the run — the standard drafting convention for indicating a twist — rather than
-          a literal helix; a pair routed less directly (non-adjacent connectors, or to mismatched target pins)
-          still wires correctly but falls back to crossing tick marks or a simple bracket marker next to the
-          connector. A shielded conductor or twisted shielded pair can be assigned its own drain-wire pin — a
+          a literal helix; an elbow-routed pair keeps parallel lanes with diagonal crossing tick marks, and a
+          pair split across non-adjacent connectors still wires correctly but carries no twist marker. A wire's
+          construction, gauge, and twisted-pair link describe the whole physical wire, so setting them at either
+          end applies to the far end automatically (when a connection is made, a still-default end adopts the
+          configured end's wire spec, and gauges snap to each connector's own contact range). A shielded
+          conductor or twisted shielded pair can be assigned its own drain-wire pin — a
           real, separately-wired pin like any other, not an abstract flag — drawn as an oval shield marker
           around the conductor(s) at each end of the run, with a 90° tap from the drain-side oval to the drain
           pin's own position; the ovals are a symbolic marker, not a to-scale cable jacket drawing. The schematic

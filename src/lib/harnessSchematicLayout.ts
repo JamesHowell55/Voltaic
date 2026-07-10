@@ -52,7 +52,6 @@ export interface PinPoint {
   leftX: number;
   rightX: number;
   y: number;
-  twistedWithPin?: number;
   /** True when 3+ pins are spliced together here — render a filled junction
    *  dot instead of a plain connection dot, the standard schematic
    *  convention for a soldered/crimped multi-way joint. */
@@ -104,9 +103,7 @@ export interface CrossLine { x1: number; y1: number; x2: number; y2: number }
  *  two connectors is drawn with the conductors literally swapping rows at
  *  intervals (crossovers baked into their WirePath points), so `crossings`
  *  is empty; an elbow-routed pair keeps parallel offset lanes and gets this
- *  overlay of diagonal crossing tick lines instead. Either way this record
- *  marks the pair as "already indicated" so the near-box bracket fallback
- *  doesn't draw a second marker. */
+ *  overlay of diagonal crossing tick lines instead. */
 export interface TwistBundle {
   netIdA: string;
   netIdB: string;
@@ -311,7 +308,6 @@ export function buildSchematicLayout(connectors: ConnectorSpec[]): SchematicLayo
       leftX: x,
       rightX: x + BOX_WIDTH,
       y: y + HEADER_HEIGHT + pi * ROW_HEIGHT + ROW_HEIGHT / 2,
-      twistedWithPin: p.twistedWithPin,
       isSpliceAnchor: spliceAnchorKeys.has(`${c.id}:${p.pin}`),
     }));
     return {

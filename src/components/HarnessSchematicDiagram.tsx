@@ -80,14 +80,6 @@ export default function HarnessSchematicDiagram({ layout }: Props) {
   // but it's still a connected pin.
   for (const s of layout.shields) connectedPins.add(`${s.drainConnectorId}:${s.drainPin}`);
 
-  // Twisted pairs already decorated by a TwistBundle (crossing lines along
-  // the run) skip the near-box bracket fallback below, so a pair isn't
-  // shown twice.
-  const bundledPins = new Set<string>();
-  for (const b of layout.twistBundles) {
-    for (const netId of [b.netIdA, b.netIdB]) for (const part of netId.split('|')) bundledPins.add(part);
-  }
-
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'flex-start' }}>
       <svg viewBox={`0 0 ${layout.width} ${layout.height}`} width="100%" style={{ minHeight: 240, flex: '1 1 480px' }}>
@@ -124,58 +116,31 @@ export default function HarnessSchematicDiagram({ layout }: Props) {
           </g>
         ))}
 
-        {layout.connectors.map((box) => {
-          const twistPairs: { pinA: number; pinB: number; yA: number; yB: number }[] = [];
-          for (const p of box.pins) {
-            if (p.twistedWithPin != null && p.twistedWithPin > p.pin && !bundledPins.has(`${box.id}:${p.pin}`)) {
-              const partner = box.pins.find((o) => o.pin === p.twistedWithPin);
-              if (partner) twistPairs.push({ pinA: p.pin, pinB: partner.pin, yA: p.y, yB: partner.y });
-            }
-          }
-          return (
-            <g key={box.id}>
-              <rect x={box.x} y={box.y} width={box.width} height={box.height} rx={4} fill="var(--bg-card)" stroke="var(--border-strong)" strokeWidth={1.5} />
-              <rect x={box.x} y={box.y} width={box.width} height={30} rx={4} fill="color-mix(in srgb, var(--accent) 12%, transparent)" stroke="var(--border-strong)" strokeWidth={1} />
-              <text x={box.x + box.width / 2} y={box.y + 14} textAnchor="middle" fontSize="11" fontWeight="700" fill="var(--text)" fontFamily="ui-monospace, monospace">{box.name}</text>
-              <text x={box.x + box.width / 2} y={box.y + 25} textAnchor="middle" fontSize="8" fill="var(--text-2)" fontFamily="ui-monospace, monospace">{box.subtitle}</text>
+        {layout.connectors.map((box) => (
+          <g key={box.id}>
+            <rect x={box.x} y={box.y} width={box.width} height={box.height} rx={4} fill="var(--bg-card)" stroke="var(--border-strong)" strokeWidth={1.5} />
+            <rect x={box.x} y={box.y} width={box.width} height={30} rx={4} fill="color-mix(in srgb, var(--accent) 12%, transparent)" stroke="var(--border-strong)" strokeWidth={1} />
+            <text x={box.x + box.width / 2} y={box.y + 14} textAnchor="middle" fontSize="11" fontWeight="700" fill="var(--text)" fontFamily="ui-monospace, monospace">{box.name}</text>
+            <text x={box.x + box.width / 2} y={box.y + 25} textAnchor="middle" fontSize="8" fill="var(--text-2)" fontFamily="ui-monospace, monospace">{box.subtitle}</text>
 
-              {box.pins.map((p) => {
-                const connected = connectedPins.has(`${box.id}:${p.pin}`);
-                const dotColor = connected ? 'var(--accent)' : 'var(--text-faint)';
-                const dotR = p.isSpliceAnchor ? 4.5 : 2.5;
-                return (
-                  <g key={p.pin}>
-                    <line x1={box.x} x2={box.x + box.width} y1={p.y} y2={p.y} stroke="var(--border-subtle)" strokeWidth={0.5} />
-                    <circle cx={box.x} cy={p.y} r={dotR} fill={dotColor} stroke={p.isSpliceAnchor ? 'var(--bg-card)' : 'none'} strokeWidth={p.isSpliceAnchor ? 1 : 0} />
-                    <circle cx={box.x + box.width} cy={p.y} r={dotR} fill={dotColor} stroke={p.isSpliceAnchor ? 'var(--bg-card)' : 'none'} strokeWidth={p.isSpliceAnchor ? 1 : 0} />
-                    {p.isSpliceAnchor && <title>Splice — multiple wires joined at this pin</title>}
-                    <text x={box.x + 6} y={p.y + 3} fontSize="7.5" fill="var(--text-faint)" fontFamily="ui-monospace, monospace">{p.pin}</text>
-                    <text x={box.x + box.width / 2} y={p.y + 3} textAnchor="middle" fontSize="8" fill={connected ? 'var(--text)' : 'var(--text-faint)'} fontFamily="ui-monospace, monospace">{p.signalName}</text>
-                    <text x={box.x + box.width - 6} y={p.y + 3} textAnchor="end" fontSize="7.5" fill="var(--text-faint)" fontFamily="ui-monospace, monospace">{p.pin}</text>
-                  </g>
-                );
-              })}
-
-              {/* fallback twisted-pair brackets — only for pairs NOT already shown as
-                  crossing lines along their shared run (e.g. routed to non-adjacent
-                  connectors or mismatched target pins); a small zigzag stands in for
-                  the physical twist, per the convention shown in Altium's harness
-                  wiring diagrams. */}
-              {twistPairs.map((tp) => {
-                const bx = box.x + box.width + 5;
-                const midY = (tp.yA + tp.yB) / 2;
-                return (
-                  <g key={`${tp.pinA}-${tp.pinB}`}>
-                    <path d={`M ${box.x + box.width} ${tp.yA} L ${bx} ${tp.yA} L ${bx} ${tp.yB} L ${box.x + box.width} ${tp.yB}`} fill="none" stroke="var(--blue)" strokeWidth={1.2} />
-                    {[-4, 0, 4].map((dy) => (
-                      <path key={dy} d={`M ${bx - 3} ${midY + dy - 2} L ${bx + 3} ${midY + dy} L ${bx - 3} ${midY + dy + 2}`} fill="none" stroke="var(--blue)" strokeWidth={1} />
-                    ))}
-                  </g>
-                );
-              })}
-            </g>
-          );
-        })}
+            {box.pins.map((p) => {
+              const connected = connectedPins.has(`${box.id}:${p.pin}`);
+              const dotColor = connected ? 'var(--accent)' : 'var(--text-faint)';
+              const dotR = p.isSpliceAnchor ? 4.5 : 2.5;
+              return (
+                <g key={p.pin}>
+                  <line x1={box.x} x2={box.x + box.width} y1={p.y} y2={p.y} stroke="var(--border-subtle)" strokeWidth={0.5} />
+                  <circle cx={box.x} cy={p.y} r={dotR} fill={dotColor} stroke={p.isSpliceAnchor ? 'var(--bg-card)' : 'none'} strokeWidth={p.isSpliceAnchor ? 1 : 0} />
+                  <circle cx={box.x + box.width} cy={p.y} r={dotR} fill={dotColor} stroke={p.isSpliceAnchor ? 'var(--bg-card)' : 'none'} strokeWidth={p.isSpliceAnchor ? 1 : 0} />
+                  {p.isSpliceAnchor && <title>Splice — multiple wires joined at this pin</title>}
+                  <text x={box.x + 6} y={p.y + 3} fontSize="7.5" fill="var(--text-faint)" fontFamily="ui-monospace, monospace">{p.pin}</text>
+                  <text x={box.x + box.width / 2} y={p.y + 3} textAnchor="middle" fontSize="8" fill={connected ? 'var(--text)' : 'var(--text-faint)'} fontFamily="ui-monospace, monospace">{p.signalName}</text>
+                  <text x={box.x + box.width - 6} y={p.y + 3} textAnchor="end" fontSize="7.5" fill="var(--text-faint)" fontFamily="ui-monospace, monospace">{p.pin}</text>
+                </g>
+              );
+            })}
+          </g>
+        ))}
       </svg>
 
       {layout.legend.length > 0 && (

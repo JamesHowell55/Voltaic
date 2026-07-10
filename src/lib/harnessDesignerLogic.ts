@@ -6,8 +6,23 @@
 // Multiple pins may point at the same target pin — that is a multi-drop
 // splice, not an error — so the destination graph is undirected and
 // extractNets groups it into connected components (see extractNets).
+//
+// A wire's construction/gauge and twisted-pair link describe the whole
+// physical wire, not one end of it — the setters below propagate edits made
+// at either end to the other end (and across splices), so the two ends of
+// one wire can never disagree about what kind of wire it is.
 import { CONTACT_SIZE_SPECS, type ContactSize } from './connectorLibrary';
-import { getWireConstruction } from './harnessWireTypes';
+import { getWireConstruction, type WireCategory } from './harnessWireTypes';
+
+export const DEFAULT_CONSTRUCTION_ID = 'm22759-32';
+
+const TWISTABLE_CATEGORIES: WireCategory[] = ['twistedPair', 'twistedShieldedPair', 'canBus'];
+
+/** True when this construction is a twisted category (twisted pair / twisted
+ *  shielded pair / CAN bus) — the only kinds a "Twisted w/" link applies to. */
+export function isTwistable(constructionId: string): boolean {
+  return TWISTABLE_CATEGORIES.includes(getWireConstruction(constructionId).category);
+}
 
 export interface Destination {
   kind: 'unused' | 'ground' | 'pin';
@@ -157,6 +172,86 @@ function findPin(connectors: ConnectorSpec[], connectorId: string, pin: number):
   return connectors.find((c) => c.id === connectorId)?.pins.find((p) => p.pin === pin);
 }
 
+/** Pins directly wired to this one — its own pin destination plus every pin
+ *  whose destination points back at it (destinations are stored one-way, so
+ *  both directions must be scanned). */
+function directPeers(connectors: ConnectorSpec[], connectorId: string, pin: number): { connectorId: string; pin: number }[] {
+  const keys = new Set<string>();
+  const self = findPin(connectors, connectorId, pin);
+  if (self?.destination.kind === 'pin' && self.destination.connectorId != null && self.destination.pin != null) {
+    keys.add(pinKey(self.destination.connectorId, self.destination.pin));
+  }
+  for (const c of connectors) {
+    for (const p of c.pins) {
+      if (p.destination.kind === 'pin' && p.destination.connectorId === connectorId && p.destination.pin === pin) {
+        keys.add(pinKey(c.id, p.pin));
+      }
+    }
+  }
+  keys.delete(pinKey(connectorId, pin));
+  return [...keys].map(parsePinKey);
+}
+
+/** The single far end of this pin's wire — undefined when the pin is
+ *  unconnected or part of a multi-drop splice (no one counterpart), the
+ *  cases where mirroring a twist link across the wire would be ambiguous. */
+function counterpartOf(connectors: ConnectorSpec[], connectorId: string, pin: number): { connectorId: string; pin: number } | undefined {
+  const peers = directPeers(connectors, connectorId, pin);
+  return peers.length === 1 ? peers[0] : undefined;
+}
+
+/** Every pin in this pin's net — the full connected component including the
+ *  pin itself, walking destinations in both directions. */
+function netMembers(connectors: ConnectorSpec[], connectorId: string, pin: number): { connectorId: string; pin: number }[] {
+  const visited = new Set([pinKey(connectorId, pin)]);
+  const queue = [{ connectorId, pin }];
+  while (queue.length > 0) {
+    const cur = queue.pop()!;
+    for (const peer of directPeers(connectors, cur.connectorId, cur.pin)) {
+      const k = pinKey(peer.connectorId, peer.pin);
+      if (!visited.has(k)) {
+        visited.add(k);
+        queue.push(peer);
+      }
+    }
+  }
+  return [...visited].map(parsePinKey);
+}
+
+/** Nearest AWG this contact size accepts — a propagated gauge the far
+ *  connector's contact physically can't take is snapped to its closest legal
+ *  value rather than stored invalid (the one place the two ends of a wire may
+ *  still legitimately disagree, since a real harness would need a different
+ *  contact size there). */
+function nearestAllowedAwg(contactSize: ContactSize, awg: number): number {
+  const allowed = CONTACT_SIZE_SPECS[contactSize].awgRange;
+  return allowed.reduce((best, a) => (Math.abs(a - awg) < Math.abs(best - awg) ? a : best), allowed[0]);
+}
+
+/** A pin still carrying the construction+gauge makeDefaultConnector assigned
+ *  (never deliberately changed by the user) — used to decide which end's wire
+ *  spec should win when a new pin-to-pin link is made. */
+function hasDefaultSpec(pin: PinSpec, contactSize: ContactSize): boolean {
+  return pin.constructionId === DEFAULT_CONSTRUCTION_ID && pin.awg === CONTACT_SIZE_SPECS[contactSize].awgRange[0];
+}
+
+/** Copies (connectorId, pin)'s construction+AWG onto every other member of
+ *  its net, snapping AWG to each connector's own contact range. Mutates the
+ *  already-copied array in place (internal helper for the exported immutable
+ *  setters). */
+function propagateSpecFrom(next: ConnectorSpec[], connectorId: string, pin: number): void {
+  const from = findPin(next, connectorId, pin);
+  if (!from) return;
+  for (const m of netMembers(next, connectorId, pin)) {
+    if (m.connectorId === connectorId && m.pin === pin) continue;
+    const conn = next.find((c) => c.id === m.connectorId);
+    const p = conn?.pins.find((o) => o.pin === m.pin);
+    if (!conn || !p) continue;
+    p.constructionId = from.constructionId;
+    p.awg = nearestAllowedAwg(conn.contactSize, from.awg);
+  }
+}
+
 /** True when this pin's current wire construction actually has a shield
  *  layer (twistedShieldedPair / shielded) — a drain wire only makes sense
  *  for those, not a bare single conductor or unshielded twisted pair/CAN
@@ -213,13 +308,104 @@ export function setShieldDrain(connectors: ConnectorSpec[], connectorId: string,
 /** Clears any shieldDrainForPin reference that no longer points at a valid
  *  shield target — call after any edit that could invalidate one (a
  *  construction change dropping the shield, a broken twist link, or a
- *  removed pin). */
+ *  removed pin). A drain pointing at a pair's higher-numbered member is
+ *  re-pointed at the pair's canonical (lower) pin instead of dropped, so a
+ *  drain assigned to a lone shielded pin survives that pin later joining a
+ *  twisted pair; if two drains collapse onto one target this way, the first
+ *  keeps it. */
 export function pruneDanglingShieldDrains(connector: ConnectorSpec): ConnectorSpec {
-  const validTargets = new Set(getShieldTargets(connector).flatMap((t) => (t.partnerPin != null ? [t.pin, t.partnerPin] : [t.pin])));
+  const canonicalOf = new Map<number, number>();
+  for (const t of getShieldTargets(connector)) {
+    canonicalOf.set(t.pin, t.pin);
+    if (t.partnerPin != null) canonicalOf.set(t.partnerPin, t.pin);
+  }
+  const claimed = new Set<number>();
   return {
     ...connector,
-    pins: connector.pins.map((p) => (p.shieldDrainForPin != null && !validTargets.has(p.shieldDrainForPin) ? { ...p, shieldDrainForPin: undefined } : p)),
+    pins: connector.pins.map((p) => {
+      if (p.shieldDrainForPin == null) return p;
+      const canonical = canonicalOf.get(p.shieldDrainForPin);
+      const drain = canonical != null && !claimed.has(canonical) ? canonical : undefined;
+      if (drain != null) claimed.add(drain);
+      return drain === p.shieldDrainForPin ? p : { ...p, shieldDrainForPin: drain };
+    }),
   };
+}
+
+/** Clears any twist link that is no longer mutually consistent between two
+ *  existing, twist-capable pins — call after anything that can invalidate
+ *  one (a construction change propagated from the wire's far end, or a
+ *  pin-count reduction removing the partner). */
+export function pruneInvalidTwists(connector: ConnectorSpec): ConnectorSpec {
+  return {
+    ...connector,
+    pins: connector.pins.map((p) => {
+      if (p.twistedWithPin == null) return p;
+      const partner = connector.pins.find((o) => o.pin === p.twistedWithPin);
+      const valid = partner != null && partner.twistedWithPin === p.pin && isTwistable(p.constructionId) && isTwistable(partner.constructionId);
+      return valid ? p : { ...p, twistedWithPin: undefined };
+    }),
+  };
+}
+
+/** Core reciprocal twist-link update on an already-copied connector array:
+ *  clears the old reciprocal link on both the pin being set and whatever the
+ *  new partner was previously twisted with, then points both ends at each
+ *  other (or just clears, when partnerPin is null). No mirroring — that is
+ *  layered on by the exported setters. */
+function applyTwist(next: ConnectorSpec[], connectorId: string, pin: number, partnerPin: number | null): void {
+  const conn = next.find((c) => c.id === connectorId);
+  const from = conn?.pins.find((p) => p.pin === pin);
+  if (!conn || !from) return;
+  if (from.twistedWithPin != null) {
+    const oldPartner = conn.pins.find((p) => p.pin === from.twistedWithPin);
+    if (oldPartner && oldPartner.twistedWithPin === pin) oldPartner.twistedWithPin = undefined;
+  }
+  if (partnerPin != null) {
+    const newPartner = conn.pins.find((p) => p.pin === partnerPin);
+    if (newPartner) {
+      if (newPartner.twistedWithPin != null) {
+        const itsOldPartner = conn.pins.find((p) => p.pin === newPartner.twistedWithPin);
+        if (itsOldPartner && itsOldPartner.twistedWithPin === partnerPin) itsOldPartner.twistedWithPin = undefined;
+      }
+      newPartner.twistedWithPin = pin;
+    }
+  }
+  from.twistedWithPin = partnerPin ?? undefined;
+}
+
+/** After (connectorId, pin)'s wiring or twist link changed, re-derives the
+ *  twist at the far end of its pair, in whichever direction the twist was
+ *  specified: if this pin and its twist partner both run point-to-point onto
+ *  the same far connector, the two far pins are linked automatically — and
+ *  when the far end holds the twist and this end doesn't yet, this end's
+ *  pins are linked instead. This is what lets a twisted pair be specified at
+ *  ONE connector and apply to the terminating connector on its own. Mutates
+ *  the copied array in place. */
+function mirrorTwistAcross(next: ConnectorSpec[], connectorId: string, pin: number): void {
+  const conn = next.find((c) => c.id === connectorId);
+  const from = conn?.pins.find((p) => p.pin === pin);
+  if (!conn || !from) return;
+
+  const cFrom = counterpartOf(next, connectorId, pin);
+  if (!cFrom) return;
+  const farConn = next.find((c) => c.id === cFrom.connectorId);
+  const farPin = farConn?.pins.find((p) => p.pin === cFrom.pin);
+  if (!farConn || !farPin) return;
+
+  if (from.twistedWithPin != null) {
+    const cPartner = counterpartOf(next, connectorId, from.twistedWithPin);
+    if (!cPartner || cPartner.connectorId !== farConn.id) return;
+    const farPartner = farConn.pins.find((p) => p.pin === cPartner.pin);
+    if (!farPartner || !isTwistable(farPin.constructionId) || !isTwistable(farPartner.constructionId)) return;
+    applyTwist(next, farConn.id, farPin.pin, farPartner.pin);
+  } else if (farPin.twistedWithPin != null) {
+    const cFarPartner = counterpartOf(next, farConn.id, farPin.twistedWithPin);
+    if (!cFarPartner || cFarPartner.connectorId !== connectorId) return;
+    const nearPartner = conn.pins.find((p) => p.pin === cFarPartner.pin);
+    if (!nearPartner || !isTwistable(from.constructionId) || !isTwistable(nearPartner.constructionId)) return;
+    applyTwist(next, connectorId, from.pin, nearPartner.pin);
+  }
 }
 
 /** A pin's signal name is considered "still at its default" (never
@@ -234,63 +420,119 @@ function isDefaultSignalName(pin: PinSpec): boolean {
  *  touched — other pins already pointing at the same target are left alone,
  *  which is exactly how a multi-drop splice is created (several pins all
  *  pointing at, directly or transitively through, one another — see
- *  extractNets). When the new target still has its default signal name and
- *  this pin has already been renamed (or vice-versa), the default one adopts
- *  the other's name — every pin touching one connection is one logical
- *  signal, so they should read the same name — but a name the user has
- *  already deliberately typed on either pin is never overwritten. */
+ *  extractNets). Because the two ends of a wire are one physical object, the
+ *  link also synchronizes the ends: a still-default signal name or wire spec
+ *  on either side adopts the other side's deliberately-set value (on a
+ *  conflict between two deliberate values, the end being edited wins), and a
+ *  twisted-pair link marked at either connector is mirrored onto the other
+ *  once both conductors of the pair run point-to-point onto it. */
 export function setPinDestination(connectors: ConnectorSpec[], fromConnectorId: string, fromPin: number, newDestination: Destination): ConnectorSpec[] {
   const next = connectors.map((c) => ({ ...c, pins: c.pins.map((p) => ({ ...p, destination: { ...p.destination } })) }));
 
-  const from = findPin(next, fromConnectorId, fromPin);
-  if (!from) return connectors;
+  const fromConn = next.find((c) => c.id === fromConnectorId);
+  const from = fromConn?.pins.find((p) => p.pin === fromPin);
+  if (!fromConn || !from) return connectors;
 
+  // Re-routing or removing this pin's own outgoing edge can strand a twisted
+  // pair's far-end mirror — clear it while the old routing needed to locate
+  // it still exists.
+  if (from.destination.kind === 'pin' && from.twistedWithPin != null) {
+    const cFrom = counterpartOf(next, fromConnectorId, fromPin);
+    const cPartner = counterpartOf(next, fromConnectorId, from.twistedWithPin);
+    if (cFrom && cPartner && cFrom.connectorId === cPartner.connectorId) {
+      const farConn = next.find((c) => c.id === cFrom.connectorId);
+      const farA = farConn?.pins.find((p) => p.pin === cFrom.pin);
+      const farB = farConn?.pins.find((p) => p.pin === cPartner.pin);
+      if (farA && farB && farA.twistedWithPin === farB.pin && farB.twistedWithPin === farA.pin) {
+        farA.twistedWithPin = undefined;
+        farB.twistedWithPin = undefined;
+      }
+    }
+  }
+
+  let syncSpecs = false;
   if (newDestination.kind === 'pin' && newDestination.connectorId != null && newDestination.pin != null) {
-    const target = findPin(next, newDestination.connectorId, newDestination.pin);
-    if (target) {
+    const targetConn = next.find((c) => c.id === newDestination.connectorId);
+    const target = targetConn?.pins.find((p) => p.pin === newDestination.pin);
+    if (targetConn && target) {
       if (isDefaultSignalName(target) && !isDefaultSignalName(from)) {
         target.signalName = from.signalName;
       } else if (isDefaultSignalName(from) && !isDefaultSignalName(target)) {
         from.signalName = target.signalName;
       }
+      const fromDefault = hasDefaultSpec(from, fromConn.contactSize);
+      const targetDefault = hasDefaultSpec(target, targetConn.contactSize);
+      if (fromDefault && !targetDefault) {
+        from.constructionId = target.constructionId;
+        from.awg = nearestAllowedAwg(fromConn.contactSize, target.awg);
+      }
+      // Two still-default ends are left alone; otherwise `from` (which just
+      // adopted the target's spec above if IT was the default one) is the
+      // winner propagated across the whole net below.
+      syncSpecs = !fromDefault || !targetDefault;
     }
   }
 
-  from.destination = newDestination;
-  return next;
+  from.destination = { ...newDestination };
+  if (syncSpecs) propagateSpecFrom(next, fromConnectorId, fromPin);
+  if (newDestination.kind === 'pin') mirrorTwistAcross(next, fromConnectorId, fromPin);
+
+  return next.map(pruneInvalidTwists).map(pruneDanglingShieldDrains);
 }
 
-/** Immutably links two pins on the SAME connector as a twisted pair, mirroring
- *  setPinDestination's mutual-consistency approach: clears the old reciprocal
- *  link (if any) on both the pin being set and whatever the new partner was
- *  previously twisted with, then points both ends at each other. Pass
- *  partnerPin=null to clear the link entirely. */
-export function setTwistedPartner(connectors: ConnectorSpec[], connectorId: string, pin: number, partnerPin: number | null): ConnectorSpec[] {
-  const next = connectors.map((c) => (c.id === connectorId ? { ...c, pins: c.pins.map((p) => ({ ...p })) } : c));
-  const conn = next.find((c) => c.id === connectorId);
-  if (!conn) return connectors;
-
-  const from = conn.pins.find((p) => p.pin === pin);
+/** Immutably applies a construction/AWG edit to one pin and propagates it to
+ *  every other pin in the same net — one physical wire has one spec, so a
+ *  spec chosen at either end (or any member of a splice) applies everywhere,
+ *  with AWG snapped to each connector's own contact range. Twist links and
+ *  shield-drain assignments the new construction invalidates are pruned on
+ *  every connector the change reached. */
+export function applyPinSpec(connectors: ConnectorSpec[], connectorId: string, pin: number, patch: Partial<Pick<PinSpec, 'constructionId' | 'awg'>>): ConnectorSpec[] {
+  const next = connectors.map((c) => ({ ...c, pins: c.pins.map((p) => ({ ...p })) }));
+  const from = findPin(next, connectorId, pin);
   if (!from) return connectors;
+  if (patch.constructionId !== undefined) from.constructionId = patch.constructionId;
+  if (patch.awg !== undefined) from.awg = patch.awg;
+  propagateSpecFrom(next, connectorId, pin);
+  return next.map(pruneInvalidTwists).map(pruneDanglingShieldDrains);
+}
 
-  if (from.twistedWithPin != null) {
-    const oldPartner = conn.pins.find((p) => p.pin === from.twistedWithPin);
-    if (oldPartner && oldPartner.twistedWithPin === pin) oldPartner.twistedWithPin = undefined;
-  }
+/** Immutably links two pins on the SAME connector as a twisted pair (or
+ *  clears with partnerPin=null), keeping the link mutually consistent — and
+ *  mirrors the change across the pair's wires: a twist describes the physical
+ *  cable, so marking or clearing it at either connector applies at the far
+ *  end automatically whenever both conductors run point-to-point onto one
+ *  far connector. */
+export function setTwistedPartner(connectors: ConnectorSpec[], connectorId: string, pin: number, partnerPin: number | null): ConnectorSpec[] {
+  const next = connectors.map((c) => ({ ...c, pins: c.pins.map((p) => ({ ...p })) }));
+  const conn = next.find((c) => c.id === connectorId);
+  const from = conn?.pins.find((p) => p.pin === pin);
+  if (!conn || !from) return connectors;
 
+  // Mirror-clear the far ends of any pair this edit breaks — the pin's own
+  // old pair, and the new partner's old pair — before the local links change.
+  const clearFarPairOf = (aPin: number, bPin: number | undefined) => {
+    if (bPin == null) return;
+    const cA = counterpartOf(next, connectorId, aPin);
+    const cB = counterpartOf(next, connectorId, bPin);
+    if (!cA || !cB || cA.connectorId !== cB.connectorId) return;
+    const farConn = next.find((c) => c.id === cA.connectorId);
+    const farA = farConn?.pins.find((p) => p.pin === cA.pin);
+    const farB = farConn?.pins.find((p) => p.pin === cB.pin);
+    if (farA && farB && farA.twistedWithPin === farB.pin && farB.twistedWithPin === farA.pin) {
+      farA.twistedWithPin = undefined;
+      farB.twistedWithPin = undefined;
+    }
+  };
+  clearFarPairOf(pin, from.twistedWithPin);
   if (partnerPin != null) {
     const newPartner = conn.pins.find((p) => p.pin === partnerPin);
-    if (newPartner) {
-      if (newPartner.twistedWithPin != null) {
-        const itsOldPartner = conn.pins.find((p) => p.pin === newPartner.twistedWithPin);
-        if (itsOldPartner && itsOldPartner.twistedWithPin === partnerPin) itsOldPartner.twistedWithPin = undefined;
-      }
-      newPartner.twistedWithPin = pin;
-    }
+    if (newPartner?.twistedWithPin != null && newPartner.twistedWithPin !== pin) clearFarPairOf(partnerPin, newPartner.twistedWithPin);
   }
 
-  from.twistedWithPin = partnerPin ?? undefined;
-  return next;
+  applyTwist(next, connectorId, pin, partnerPin);
+  if (partnerPin != null) mirrorTwistAcross(next, connectorId, pin);
+
+  return next.map(pruneDanglingShieldDrains);
 }
 
 export function makeDefaultConnector(id: string, name: string, contactSize: ContactSize, pinCount = 8): ConnectorSpec {
@@ -301,7 +543,7 @@ export function makeDefaultConnector(id: string, name: string, contactSize: Cont
     pins: Array.from({ length: pinCount }, (_, i) => ({
       pin: i + 1,
       signalName: `SIG${i + 1}`,
-      constructionId: 'm22759-32',
+      constructionId: DEFAULT_CONSTRUCTION_ID,
       awg: CONTACT_SIZE_SPECS[contactSize].awgRange[0],
       destination: { kind: 'unused' },
     })),
