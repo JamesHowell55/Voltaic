@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import BusbarCrossSection from '../components/BusbarCrossSection';
 import BusbarLengthProfile from '../components/BusbarLengthProfile';
 import ConductionStackCrossSection from '../components/ConductionStackCrossSection';
 import TimeSeriesChart from '../components/TimeSeriesChart';
+import SavedCalculations from '../components/SavedCalculations';
 import { useTheme } from '../lib/ThemeContext';
 import { deriveAccentOnLight } from '../lib/theme';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData, type ReportDiagram } from '../lib/pdfExport';
 import { renderLengthProfileSvg, renderCrossSectionSvg, renderConductionStackSvg, renderTimeSeriesChartSvg } from '../lib/pdfDiagrams';
 import { useBranding } from '../lib/useBranding';
 import { useEntitlement } from '../lib/useEntitlement';
+import { useSavedCalculations } from '../lib/useSavedCalculations';
 import PremiumGate from '../components/PremiumGate';
 import { MATERIALS, EMISSIVITY_PRESETS, COATING_PRESETS, TIM_PRESETS, COOLANT_PRESETS } from '../lib/materials';
 import {
@@ -148,6 +150,74 @@ export default function BusbarCalculator() {
     setMaxContinuousTempC(MATERIALS[id].defaultMaxContinuousTemp);
     setMaxFaultTempC(MATERIALS[id].defaultMaxShortCircuitTemp);
   };
+
+  const getInputs = useCallback((): Record<string, unknown> => ({
+    busbarType, sections: sections.map(s => ({ width: s.width, length: s.length, coolingEnabled: !!s.coolingEnabled })),
+    thicknessMm, profileWidth, profileThickness, nBars, barGap, bundleLengthM,
+    materialId, orientation, emissivity, convMode, manualHValue,
+    coatingPresetId, coatingThicknessMm, coatingConductivity,
+    timPresetId, timThicknessMm, timConductivity,
+    metalMaterialId, metalThicknessMm, customMetalConductivity,
+    coolantPresetId, coolantDensity, coolantSpecificHeat, coolantFlowRateLPerMin, coolantInletTempC,
+    currentType, current, frequency, motorRpm, motorPolePairs, ambientC,
+    durationMode, faultDurationS, faultInitialTempC,
+    steps: steps.map(s => ({ current: s.current, durationS: s.durationS })),
+    maxContinuousTempC, maxFaultTempC,
+  }), [
+    busbarType, sections, thicknessMm, profileWidth, profileThickness, nBars, barGap, bundleLengthM,
+    materialId, orientation, emissivity, convMode, manualHValue,
+    coatingPresetId, coatingThicknessMm, coatingConductivity,
+    timPresetId, timThicknessMm, timConductivity,
+    metalMaterialId, metalThicknessMm, customMetalConductivity,
+    coolantPresetId, coolantDensity, coolantSpecificHeat, coolantFlowRateLPerMin, coolantInletTempC,
+    currentType, current, frequency, motorRpm, motorPolePairs, ambientC,
+    durationMode, faultDurationS, faultInitialTempC, steps, maxContinuousTempC, maxFaultTempC,
+  ]);
+
+  const restoreInputs = useCallback((inp: Record<string, unknown>) => {
+    const v = inp as Record<string, any>;
+    if (v.busbarType) setBusbarType(v.busbarType);
+    if (Array.isArray(v.sections)) setSections(v.sections.map((s: any) => ({ ...newSection(s.width, s.length), coolingEnabled: !!s.coolingEnabled })));
+    if (v.thicknessMm != null) setThicknessMm(v.thicknessMm);
+    if (v.profileWidth != null) setProfileWidth(v.profileWidth);
+    if (v.profileThickness != null) setProfileThickness(v.profileThickness);
+    if (v.nBars != null) setNBars(v.nBars);
+    if (v.barGap != null) setBarGap(v.barGap);
+    if (v.bundleLengthM != null) setBundleLengthM(v.bundleLengthM);
+    if (v.materialId) setMaterialId(v.materialId);
+    if (v.orientation) setOrientation(v.orientation);
+    if (v.emissivity != null) setEmissivity(v.emissivity);
+    if (v.convMode) setConvMode(v.convMode);
+    if (v.manualHValue != null) setManualHValue(v.manualHValue);
+    if (v.coatingPresetId) setCoatingPresetId(v.coatingPresetId);
+    if (v.coatingThicknessMm != null) setCoatingThicknessMm(v.coatingThicknessMm);
+    if (v.coatingConductivity != null) setCoatingConductivity(v.coatingConductivity);
+    if (v.timPresetId) setTimPresetId(v.timPresetId);
+    if (v.timThicknessMm != null) setTimThicknessMm(v.timThicknessMm);
+    if (v.timConductivity != null) setTimConductivity(v.timConductivity);
+    if (v.metalMaterialId) setMetalMaterialId(v.metalMaterialId);
+    if (v.metalThicknessMm != null) setMetalThicknessMm(v.metalThicknessMm);
+    if (v.customMetalConductivity != null) setCustomMetalConductivity(v.customMetalConductivity);
+    if (v.coolantPresetId) setCoolantPresetId(v.coolantPresetId);
+    if (v.coolantDensity != null) setCoolantDensity(v.coolantDensity);
+    if (v.coolantSpecificHeat != null) setCoolantSpecificHeat(v.coolantSpecificHeat);
+    if (v.coolantFlowRateLPerMin != null) setCoolantFlowRateLPerMin(v.coolantFlowRateLPerMin);
+    if (v.coolantInletTempC != null) setCoolantInletTempC(v.coolantInletTempC);
+    if (v.currentType) setCurrentType(v.currentType);
+    if (v.current != null) setCurrent(v.current);
+    if (v.frequency != null) setFrequency(v.frequency);
+    if (v.motorRpm != null) setMotorRpm(v.motorRpm);
+    if (v.motorPolePairs != null) setMotorPolePairs(v.motorPolePairs);
+    if (v.ambientC != null) setAmbientC(v.ambientC);
+    if (v.durationMode) setDurationMode(v.durationMode);
+    if (v.faultDurationS != null) setFaultDurationS(v.faultDurationS);
+    if (v.faultInitialTempC != null) setFaultInitialTempC(v.faultInitialTempC);
+    if (Array.isArray(v.steps)) setSteps(v.steps.map((s: any) => newStep(s.current, s.durationS)));
+    if (v.maxContinuousTempC != null) setMaxContinuousTempC(v.maxContinuousTempC);
+    if (v.maxFaultTempC != null) setMaxFaultTempC(v.maxFaultTempC);
+  }, []);
+
+  const saved = useSavedCalculations('busbar');
 
   const updateSection = (id: string, patch: Partial<SingleSectionInput>) => {
     setSections(prev => prev.map(s => (s.id === id ? { ...s, ...patch } : s)));
@@ -1037,6 +1107,17 @@ export default function BusbarCalculator() {
 
         </div>
       </div>
+
+      <SavedCalculations
+        saves={saved.saves}
+        loading={saved.loading}
+        loggedIn={saved.loggedIn}
+        onSave={(label) => saved.save(label, getInputs())}
+        onLoad={restoreInputs}
+        onUpdate={(id) => saved.update(id, getInputs())}
+        onRename={saved.rename}
+        onDelete={saved.remove}
+      />
 
       <div className="card" style={{ marginTop: '1.25rem' }}>
         <div className="card-title">Reference &amp; assumptions</div>

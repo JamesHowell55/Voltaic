@@ -46,7 +46,7 @@ function AuthForm() {
     <div className="card" style={{ maxWidth: 420 }}>
       <div className="card-title">{mode === 'signIn' ? 'Log in' : 'Create an account'}</div>
       {signedUpMessage ? (
-        <p className="note">Check your email to confirm your account, then log in.</p>
+        <p className="note">Check your email for a confirmation link from Supabase, then log in. If you don't see it, check your spam folder.</p>
       ) : (
         <form onSubmit={handleSubmit}>
           <div className="field">
@@ -66,6 +66,12 @@ function AuthForm() {
       <button className="btn small" style={{ marginTop: '0.75rem' }} onClick={() => { setMode(m => (m === 'signIn' ? 'signUp' : 'signIn')); setError(null); setSignedUpMessage(false); }}>
         {mode === 'signIn' ? "Don't have an account? Sign up" : 'Already have an account? Log in'}
       </button>
+      <p className="hint" style={{ marginTop: '0.75rem', lineHeight: 1.5 }}>
+        Authentication is managed securely by <a href="https://supabase.com" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)' }}>Supabase</a>, an
+        open-source platform with enterprise-grade security. Your password is never stored by Voltaic — all
+        credentials are handled directly by Supabase's authentication service. Confirmation emails will come
+        from a Supabase address (noreply@mail.supabase.io).
+      </p>
     </div>
   );
 }
