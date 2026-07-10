@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
@@ -13,6 +13,8 @@ import {
 } from '../lib/harnessDesignerLogic';
 import { buildSchematicLayout } from '../lib/harnessSchematicLayout';
 import { WIRE_CONSTRUCTIONS, getWireConstruction } from '../lib/harnessWireTypes';
+import SavedCalculations from '../components/SavedCalculations';
+import { useSavedCalculations } from '../lib/useSavedCalculations';
 
 function destValue(d: Destination): string {
   if (d.kind === 'unused') return 'unused';
@@ -131,6 +133,25 @@ export default function HarnessDesigner() {
   const updateShieldDrain = (connectorId: string, drainPin: number, targetPin: number | null) => {
     setConnectors((cs) => setShieldDrain(cs, connectorId, drainPin, targetPin));
   };
+
+  const getInputs = useCallback((): Record<string, unknown> => ({
+    connectors, activeId,
+  }), [connectors, activeId]);
+
+  const restoreInputs = useCallback((inp: Record<string, unknown>) => {
+    const v = inp as Record<string, any>;
+    if (Array.isArray(v.connectors)) {
+      setConnectors(v.connectors as ConnectorSpec[]);
+      const maxNum = Math.max(0, ...(v.connectors as ConnectorSpec[]).map((c: ConnectorSpec) => {
+        const m = c.id.match(/^c(\d+)$/);
+        return m ? Number(m[1]) : 0;
+      }));
+      nextConnectorId = maxNum + 1;
+    }
+    if (v.activeId != null) setActiveId(v.activeId);
+  }, []);
+
+  const saved = useSavedCalculations('harness-designer');
 
   const layout = useMemo(() => buildSchematicLayout(connectors), [connectors]);
 
@@ -367,6 +388,10 @@ export default function HarnessDesigner() {
           </table>
         </div>
       </div>
+
+      <SavedCalculations saves={saved.saves} loading={saved.loading} loggedIn={saved.loggedIn}
+        onSave={(label) => saved.save(label, getInputs())} onLoad={restoreInputs}
+        onUpdate={(id) => saved.update(id, getInputs())} onRename={saved.rename} onDelete={saved.remove} />
 
       <div className="card" style={{ marginTop: '1.25rem' }}>
         <div className="card-title">Reference &amp; assumptions</div>

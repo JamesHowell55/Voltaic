@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type CalcStepData } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
+import { useSavedCalculations } from '../lib/useSavedCalculations';
+import SavedCalculations from '../components/SavedCalculations';
 import PremiumGate from '../components/PremiumGate';
 import InfoTooltip from '../components/InfoTooltip';
 import BundleCrossSection, { type BundleWireVisual } from '../components/BundleCrossSection';
@@ -47,6 +49,21 @@ export default function BundleDiameterCalculator() {
   const coveringFamily = coveringFamilyId !== 'none' ? getCoveringFamily(coveringFamilyId) : undefined;
   const [partMarkingId, setPartMarkingId] = useState('none');
   const partMarking = PART_MARKING_PRESETS.find((p) => p.id === partMarkingId) ?? PART_MARKING_PRESETS[0];
+
+  const getInputs = useCallback((): Record<string, unknown> => ({
+    groups: groups.map(g => ({ label: g.label, count: g.count, awg: g.awg, constructionId: g.constructionId })),
+    overbraidId, coveringFamilyId, partMarkingId,
+  }), [groups, overbraidId, coveringFamilyId, partMarkingId]);
+
+  const restoreInputs = useCallback((inp: Record<string, unknown>) => {
+    const v = inp as Record<string, any>;
+    if (Array.isArray(v.groups)) setGroups(v.groups.map((g: any, i: number) => ({ id: String(i + 1), label: g.label, count: g.count, awg: g.awg, constructionId: g.constructionId })));
+    if (v.overbraidId) setOverbraidId(v.overbraidId);
+    if (v.coveringFamilyId) setCoveringFamilyId(v.coveringFamilyId);
+    if (v.partMarkingId) setPartMarkingId(v.partMarkingId);
+  }, []);
+
+  const saved = useSavedCalculations('bundle-diameter');
 
   const allWires = useMemo(() => {
     const list: { id: number; diameterMm: number; construction: ReturnType<typeof getWireConstruction>; groupLabel: string; awg: number }[] = [];
@@ -332,6 +349,10 @@ export default function BundleDiameterCalculator() {
 
         </div>
       </div>
+
+      <SavedCalculations saves={saved.saves} loading={saved.loading} loggedIn={saved.loggedIn}
+        onSave={(label) => saved.save(label, getInputs())} onLoad={restoreInputs}
+        onUpdate={(id) => saved.update(id, getInputs())} onRename={saved.rename} onDelete={saved.remove} />
 
       <div className="card" style={{ marginTop: '1.25rem' }}>
         <div className="card-title">Reference &amp; assumptions</div>

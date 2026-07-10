@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type CalcStepData } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
+import { useSavedCalculations } from '../lib/useSavedCalculations';
+import SavedCalculations from '../components/SavedCalculations';
 import PremiumGate from '../components/PremiumGate';
 import InfoTooltip from '../components/InfoTooltip';
 import ChokeCoreCrossSection from '../components/ChokeCoreCrossSection';
@@ -103,6 +105,53 @@ export default function ChokeSizingCalculator() {
     const preset = CISPR25_CLASSES.find((c) => c.id === id);
     if (preset) setTargetImpedanceOhm(preset.targetImpedanceOhm);
   };
+
+  const getInputs = useCallback((): Record<string, unknown> => ({
+    chokeMode, profile, dims, materialId, mur, bSat,
+    lossCoeffK, lossExpFreq, lossExpFlux, saturationMarginPercent,
+    turnsConfig, turns, phaseCount, busbarWidthMm, busbarThicknessMm, conductorCrossSectionMm2,
+    vDc, switchingFreqHz, motorPolePairs, motorSpeedRpm,
+    dcCurrentA, targetRippleA, dutyCycle,
+    cisprClassId, targetImpedanceOhm, referenceFreqHz, imbalanceCurrentA,
+  }), [chokeMode, profile, dims, materialId, mur, bSat,
+    lossCoeffK, lossExpFreq, lossExpFlux, saturationMarginPercent,
+    turnsConfig, turns, phaseCount, busbarWidthMm, busbarThicknessMm, conductorCrossSectionMm2,
+    vDc, switchingFreqHz, motorPolePairs, motorSpeedRpm,
+    dcCurrentA, targetRippleA, dutyCycle,
+    cisprClassId, targetImpedanceOhm, referenceFreqHz, imbalanceCurrentA]);
+
+  const restoreInputs = useCallback((inp: Record<string, unknown>) => {
+    const v = inp as Record<string, any>;
+    if (v.chokeMode) setChokeMode(v.chokeMode);
+    if (v.profile) setProfile(v.profile);
+    if (v.dims) setDims(v.dims);
+    if (v.materialId) setMaterialId(v.materialId);
+    if (v.mur != null) setMur(v.mur);
+    if (v.bSat != null) setBSat(v.bSat);
+    if (v.lossCoeffK != null) setLossCoeffK(v.lossCoeffK);
+    if (v.lossExpFreq != null) setLossExpFreq(v.lossExpFreq);
+    if (v.lossExpFlux != null) setLossExpFlux(v.lossExpFlux);
+    if (v.saturationMarginPercent != null) setSaturationMarginPercent(v.saturationMarginPercent);
+    if (v.turnsConfig) setTurnsConfig(v.turnsConfig);
+    if (v.turns != null) setTurns(v.turns);
+    if (v.phaseCount != null) setPhaseCount(v.phaseCount);
+    if (v.busbarWidthMm != null) setBusbarWidthMm(v.busbarWidthMm);
+    if (v.busbarThicknessMm != null) setBusbarThicknessMm(v.busbarThicknessMm);
+    if (v.conductorCrossSectionMm2 != null) setConductorCrossSectionMm2(v.conductorCrossSectionMm2);
+    if (v.vDc != null) setVDc(v.vDc);
+    if (v.switchingFreqHz != null) setSwitchingFreqHz(v.switchingFreqHz);
+    if (v.motorPolePairs != null) setMotorPolePairs(v.motorPolePairs);
+    if (v.motorSpeedRpm != null) setMotorSpeedRpm(v.motorSpeedRpm);
+    if (v.dcCurrentA != null) setDcCurrentA(v.dcCurrentA);
+    if (v.targetRippleA != null) setTargetRippleA(v.targetRippleA);
+    if (v.dutyCycle != null) setDutyCycle(v.dutyCycle);
+    if (v.cisprClassId) setCisprClassId(v.cisprClassId);
+    if (v.targetImpedanceOhm != null) setTargetImpedanceOhm(v.targetImpedanceOhm);
+    if (v.referenceFreqHz != null) setReferenceFreqHz(v.referenceFreqHz);
+    if (v.imbalanceCurrentA != null) setImbalanceCurrentA(v.imbalanceCurrentA);
+  }, []);
+
+  const saved = useSavedCalculations('choke-sizing');
 
   const materialEff = useMemo(
     () => ({ relativePermeability: mur, saturationFluxDensityT: bSat, lossCoeffK, lossExpFreq, lossExpFlux }),
@@ -690,6 +739,10 @@ export default function ChokeSizingCalculator() {
 
         </div>
       </div>
+
+      <SavedCalculations saves={saved.saves} loading={saved.loading} loggedIn={saved.loggedIn}
+        onSave={(label) => saved.save(label, getInputs())} onLoad={restoreInputs}
+        onUpdate={(id) => saved.update(id, getInputs())} onRename={saved.rename} onDelete={saved.remove} />
 
       <div className="card" style={{ marginTop: '1.25rem' }}>
         <div className="card-title">Reference &amp; assumptions</div>

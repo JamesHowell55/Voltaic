@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import PaschenChart from '../components/PaschenChart';
 import ComparisonGrid from '../components/ComparisonGrid';
+import SavedCalculations from '../components/SavedCalculations';
 import InfoTooltip from '../components/InfoTooltip';
 import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData, type ReportGridTable } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
 import { useEntitlement } from '../lib/useEntitlement';
+import { useSavedCalculations } from '../lib/useSavedCalculations';
 import PremiumGate from '../components/PremiumGate';
 import {
   MATERIAL_GROUP_CTI,
@@ -89,6 +91,35 @@ export default function CreepageClearanceCalculator() {
 
   const [safetyFactorPercent, setSafetyFactorPercent] = useState(20);
   const [fieldCondition, setFieldCondition] = useState<FieldCondition>('A');
+
+  const getInputs = useCallback((): Record<string, unknown> => ({
+    workingVoltage, hvToChassisOverride, ed332Advanced, ed332NetworkType,
+    ed332UseTransientForClearance, ed332UseAbnormalCmForChassis,
+    pollutionDegree, materialGroup, ctiValue, altitudeUnit, altitude,
+    safetyFactorPercent, fieldCondition,
+  }), [workingVoltage, hvToChassisOverride, ed332Advanced, ed332NetworkType,
+    ed332UseTransientForClearance, ed332UseAbnormalCmForChassis,
+    pollutionDegree, materialGroup, ctiValue, altitudeUnit, altitude,
+    safetyFactorPercent, fieldCondition]);
+
+  const restoreInputs = useCallback((inp: Record<string, unknown>) => {
+    const v = inp as Record<string, any>;
+    if (v.workingVoltage != null) setWorkingVoltage(v.workingVoltage);
+    if (v.hvToChassisOverride !== undefined) setHvToChassisOverride(v.hvToChassisOverride);
+    if (v.ed332Advanced != null) setEd332Advanced(v.ed332Advanced);
+    if (v.ed332NetworkType) setEd332NetworkType(v.ed332NetworkType);
+    if (v.ed332UseTransientForClearance != null) setEd332UseTransientForClearance(v.ed332UseTransientForClearance);
+    if (v.ed332UseAbnormalCmForChassis != null) setEd332UseAbnormalCmForChassis(v.ed332UseAbnormalCmForChassis);
+    if (v.pollutionDegree != null) setPollutionDegree(v.pollutionDegree);
+    if (v.materialGroup) setMaterialGroup(v.materialGroup);
+    if (v.ctiValue != null) setCtiValue(v.ctiValue);
+    if (v.altitudeUnit) setAltitudeUnit(v.altitudeUnit);
+    if (v.altitude != null) setAltitude(v.altitude);
+    if (v.safetyFactorPercent != null) setSafetyFactorPercent(v.safetyFactorPercent);
+    if (v.fieldCondition) setFieldCondition(v.fieldCondition);
+  }, []);
+
+  const saved = useSavedCalculations('creepage-clearance');
 
   const altitudeM = altitudeUnit === 'ft' ? altitude / FT_PER_M : altitude;
   const altCorrection = useMemo(() => getAltitudeCorrectionFactor(altitudeM), [altitudeM]);
@@ -538,6 +569,10 @@ export default function CreepageClearanceCalculator() {
 
         </div>
       </div>
+
+      <SavedCalculations saves={saved.saves} loading={saved.loading} loggedIn={saved.loggedIn}
+        onSave={(label) => saved.save(label, getInputs())} onLoad={restoreInputs}
+        onUpdate={(id) => saved.update(id, getInputs())} onRename={saved.rename} onDelete={saved.remove} />
 
       <div className="card" style={{ marginTop: '1.25rem' }}>
         <div className="card-title">Reference &amp; assumptions</div>

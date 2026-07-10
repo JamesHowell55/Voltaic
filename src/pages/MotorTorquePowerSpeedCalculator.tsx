@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type CalcStepData } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
+import { useSavedCalculations } from '../lib/useSavedCalculations';
+import SavedCalculations from '../components/SavedCalculations';
 import PremiumGate from '../components/PremiumGate';
 import { getCategory, convert } from '../lib/unitConversions';
 import { solveTorquePowerSpeed, torqueFromCurrent, electricalInputPower, type SolveFor } from '../lib/motorTorquePowerSpeedPhysics';
@@ -39,6 +41,28 @@ export default function MotorTorquePowerSpeedCalculator() {
   const [currentA, setCurrentA] = useState(0);
   const [torqueConstant, setTorqueConstant] = useState(0.5);
   const [efficiencyPercent, setEfficiencyPercent] = useState(0);
+
+  const getInputs = useCallback((): Record<string, unknown> => ({
+    solveFor, torqueValue, torqueUnit, powerValue, powerUnit,
+    speedValue, speedUnit, currentA, torqueConstant, efficiencyPercent,
+  }), [solveFor, torqueValue, torqueUnit, powerValue, powerUnit,
+    speedValue, speedUnit, currentA, torqueConstant, efficiencyPercent]);
+
+  const restoreInputs = useCallback((inp: Record<string, unknown>) => {
+    const v = inp as Record<string, any>;
+    if (v.solveFor) setSolveFor(v.solveFor);
+    if (v.torqueValue != null) setTorqueValue(v.torqueValue);
+    if (v.torqueUnit) setTorqueUnit(v.torqueUnit);
+    if (v.powerValue != null) setPowerValue(v.powerValue);
+    if (v.powerUnit) setPowerUnit(v.powerUnit);
+    if (v.speedValue != null) setSpeedValue(v.speedValue);
+    if (v.speedUnit) setSpeedUnit(v.speedUnit);
+    if (v.currentA != null) setCurrentA(v.currentA);
+    if (v.torqueConstant != null) setTorqueConstant(v.torqueConstant);
+    if (v.efficiencyPercent != null) setEfficiencyPercent(v.efficiencyPercent);
+  }, []);
+
+  const saved = useSavedCalculations('motor-torque-power-speed');
 
   const torqueNmGiven = useMemo(() => convert('torque', torqueUnit, 'nm', torqueValue), [torqueUnit, torqueValue]);
   const powerWGiven = useMemo(() => convert('power', powerUnit, 'w', powerValue), [powerUnit, powerValue]);
@@ -265,6 +289,10 @@ export default function MotorTorquePowerSpeedCalculator() {
 
         </div>
       </div>
+
+      <SavedCalculations saves={saved.saves} loading={saved.loading} loggedIn={saved.loggedIn}
+        onSave={(label) => saved.save(label, getInputs())} onLoad={restoreInputs}
+        onUpdate={(id) => saved.update(id, getInputs())} onRename={saved.rename} onDelete={saved.remove} />
 
       <div className="card" style={{ marginTop: '1.25rem' }}>
         <div className="card-title">Reference &amp; assumptions</div>

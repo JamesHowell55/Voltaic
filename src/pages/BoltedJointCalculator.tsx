@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
 import { useEntitlement } from '../lib/useEntitlement';
+import { useSavedCalculations } from '../lib/useSavedCalculations';
+import SavedCalculations from '../components/SavedCalculations';
 import PremiumGate from '../components/PremiumGate';
 import {
   ALL_SIZES,
@@ -148,6 +150,61 @@ export default function BoltedJointCalculator() {
   const [scatterConvention, setScatterConvention] = useState<ScatterConvention>('nominalToMax');
   const [externalAxialLoadN, setExternalAxialLoadN] = useState(0);
   const [safetyFactorTarget, setSafetyFactorTarget] = useState(1.5);
+
+  const getInputs = useCallback((): Record<string, unknown> => ({
+    mode, sizeId, headType, propertyClassId, customTensileMPa, customProofMPa, holeFit,
+    sections: sections.map(s => ({ materialId: s.materialId, thicknessMm: s.thicknessMm, holeDiameterMm: s.holeDiameterMm, outerDiameterMm: s.outerDiameterMm, customIsPolymer: s.customIsPolymer })),
+    headWasherType, headWasherSpecId, nutWasherType, nutWasherSpecId,
+    includeSpringWasherCompliance, threadEngagementMode, nutType, nutPropertyClassBand,
+    engagementLengthMm, insertVariant, insertLengthRatio,
+    frictionPresetId, customThreadMu, useSeparateBearingFriction, bearingFrictionPresetId, customBearingMu,
+    targetPreloadN, targetTorqueNm, snugTorqueNm, additionalAngleDeg,
+    tighteningMethodId, scatterConvention, externalAxialLoadN, safetyFactorTarget,
+  }), [mode, sizeId, headType, propertyClassId, customTensileMPa, customProofMPa, holeFit,
+    sections, headWasherType, headWasherSpecId, nutWasherType, nutWasherSpecId,
+    includeSpringWasherCompliance, threadEngagementMode, nutType, nutPropertyClassBand,
+    engagementLengthMm, insertVariant, insertLengthRatio,
+    frictionPresetId, customThreadMu, useSeparateBearingFriction, bearingFrictionPresetId, customBearingMu,
+    targetPreloadN, targetTorqueNm, snugTorqueNm, additionalAngleDeg,
+    tighteningMethodId, scatterConvention, externalAxialLoadN, safetyFactorTarget]);
+
+  const restoreInputs = useCallback((inp: Record<string, unknown>) => {
+    const v = inp as Record<string, any>;
+    if (v.mode) setMode(v.mode);
+    if (v.sizeId) setSizeId(v.sizeId);
+    if (v.headType) setHeadType(v.headType);
+    if (v.propertyClassId) setPropertyClassId(v.propertyClassId);
+    if (v.customTensileMPa != null) setCustomTensileMPa(v.customTensileMPa);
+    if (v.customProofMPa != null) setCustomProofMPa(v.customProofMPa);
+    if (v.holeFit) setHoleFit(v.holeFit);
+    if (Array.isArray(v.sections)) setSections(v.sections.map((s: any) => ({ id: nextSectionId(), materialId: s.materialId, thicknessMm: s.thicknessMm, holeDiameterMm: s.holeDiameterMm, outerDiameterMm: s.outerDiameterMm, customIsPolymer: s.customIsPolymer })));
+    if (v.headWasherType) setHeadWasherType(v.headWasherType);
+    if (v.headWasherSpecId != null) setHeadWasherSpecId(v.headWasherSpecId);
+    if (v.nutWasherType) setNutWasherType(v.nutWasherType);
+    if (v.nutWasherSpecId != null) setNutWasherSpecId(v.nutWasherSpecId);
+    if (v.includeSpringWasherCompliance != null) setIncludeSpringWasherCompliance(v.includeSpringWasherCompliance);
+    if (v.threadEngagementMode) setThreadEngagementMode(v.threadEngagementMode);
+    if (v.nutType) setNutType(v.nutType);
+    if (v.nutPropertyClassBand) setNutPropertyClassBand(v.nutPropertyClassBand);
+    if (v.engagementLengthMm != null) setEngagementLengthMm(v.engagementLengthMm);
+    if (v.insertVariant) setInsertVariant(v.insertVariant);
+    if (v.insertLengthRatio != null) setInsertLengthRatio(v.insertLengthRatio);
+    if (v.frictionPresetId) setFrictionPresetId(v.frictionPresetId);
+    if (v.customThreadMu != null) setCustomThreadMu(v.customThreadMu);
+    if (v.useSeparateBearingFriction != null) setUseSeparateBearingFriction(v.useSeparateBearingFriction);
+    if (v.bearingFrictionPresetId) setBearingFrictionPresetId(v.bearingFrictionPresetId);
+    if (v.customBearingMu != null) setCustomBearingMu(v.customBearingMu);
+    if (v.targetPreloadN != null) setTargetPreloadN(v.targetPreloadN);
+    if (v.targetTorqueNm != null) setTargetTorqueNm(v.targetTorqueNm);
+    if (v.snugTorqueNm != null) setSnugTorqueNm(v.snugTorqueNm);
+    if (v.additionalAngleDeg != null) setAdditionalAngleDeg(v.additionalAngleDeg);
+    if (v.tighteningMethodId) setTighteningMethodId(v.tighteningMethodId);
+    if (v.scatterConvention) setScatterConvention(v.scatterConvention);
+    if (v.externalAxialLoadN != null) setExternalAxialLoadN(v.externalAxialLoadN);
+    if (v.safetyFactorTarget != null) setSafetyFactorTarget(v.safetyFactorTarget);
+  }, []);
+
+  const saved = useSavedCalculations('bolted-joint');
 
   const [advancedMode, setAdvancedMode] = useState(false);
   // Safety net: force advancedMode off if entitlement lapses (e.g. a subscription
@@ -1134,6 +1191,10 @@ export default function BoltedJointCalculator() {
 
         </div>
       </div>
+
+      <SavedCalculations saves={saved.saves} loading={saved.loading} loggedIn={saved.loggedIn}
+        onSave={(label) => saved.save(label, getInputs())} onLoad={restoreInputs}
+        onUpdate={(id) => saved.update(id, getInputs())} onRename={saved.rename} onDelete={saved.remove} />
 
       <div className="card" style={{ marginTop: '1.25rem' }}>
         <div className="card-title">Reference &amp; assumptions</div>

@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../lib/AuthContext';
 import { useEntitlement, type Plan } from '../lib/useEntitlement';
-import { supabase } from '../lib/supabaseClient';
+import { supabase, isSupabaseConfigured } from '../lib/supabaseClient';
+import { useNavigate } from 'react-router-dom';
 
 const PLAN_LABELS: Record<Plan, string> = {
   free: 'Free',
@@ -143,6 +144,93 @@ function BrandingSection() {
   );
 }
 
+const CALCULATOR_META: Record<string, { label: string; path: string }> = {
+  'busbar': { label: 'Busbar Calculator', path: '/busbar' },
+  'skin-depth': { label: 'Skin Depth Calculator', path: '/skin-depth' },
+  'creepage-clearance': { label: 'Creepage & Clearance', path: '/creepage-clearance' },
+  'cable-wire-sizing': { label: 'Cable / Wire Sizing', path: '/cable-sizing' },
+  'battery-pack': { label: 'Battery Pack Series-Parallel', path: '/battery-pack-series-parallel' },
+  'motor-torque-power-speed': { label: 'Motor Torque / Power / Speed', path: '/speed-torque-power' },
+  'bundle-diameter': { label: 'Bundle Diameter', path: '/harness-bundle-diameter' },
+  'bolted-joint': { label: 'Bolted Joint (VDI 2230)', path: '/bolted-joint' },
+  'choke-sizing': { label: 'Choke Sizing', path: '/choke-sizing' },
+  'mosfet-loss': { label: 'MOSFET Loss Calculator', path: '/mosfet-loss' },
+  'harness-designer': { label: 'Harness Designer', path: '/harness-designer' },
+};
+
+interface SaveRow {
+  id: string;
+  calculator: string;
+  label: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function SavedCalculationsOverview() {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const [saves, setSaves] = useState<SaveRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    if (!user || !isSupabaseConfigured) return;
+    setLoading(true);
+    const { data } = await supabase
+      .from('saved_calculations')
+      .select('id, calculator, label, created_at, updated_at')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false });
+    setSaves((data as SaveRow[]) ?? []);
+    setLoading(false);
+  }, [user]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const handleDelete = async (id: string) => {
+    await supabase.from('saved_calculations').delete().eq('id', id);
+    setSaves((s) => s.filter((r) => r.id !== id));
+  };
+
+  if (loading) return <div className="card"><div className="card-title">My saved calculations</div><p className="note">Loading…</p></div>;
+  if (saves.length === 0) return <div className="card"><div className="card-title">My saved calculations</div><p className="note">No saved calculations yet. Use the save button on any calculator page to store your inputs for later.</p></div>;
+
+  const grouped = new Map<string, SaveRow[]>();
+  for (const s of saves) {
+    const arr = grouped.get(s.calculator) ?? [];
+    arr.push(s);
+    grouped.set(s.calculator, arr);
+  }
+
+  return (
+    <div className="card">
+      <div className="card-title">My saved calculations</div>
+      {[...grouped.entries()].map(([slug, rows]) => {
+        const meta = CALCULATOR_META[slug] ?? { label: slug, path: '/' };
+        return (
+          <div key={slug} style={{ marginBottom: '1rem' }}>
+            <h3 style={{ fontSize: '0.85rem', margin: '0.5rem 0 0.4rem', opacity: 0.7 }}>{meta.label}</h3>
+            <table className="data-table" style={{ width: '100%', fontSize: '0.8rem' }}>
+              <thead><tr><th>Name</th><th>Last saved</th><th></th></tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.label}</td>
+                    <td>{new Date(r.updated_at).toLocaleString()}</td>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <button className="btn small" onClick={() => navigate(meta.path)}>Open</button>
+                      <button className="btn small" style={{ marginLeft: '0.4rem' }} onClick={() => handleDelete(r.id)}>Delete</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function AccountPage() {
   const { user, signOut } = useAuth();
   const { plan, isPremium, currentPeriodEnd } = useEntitlement();
@@ -207,6 +295,8 @@ export default function AccountPage() {
         )}
         <button className="btn small" style={{ marginTop: '0.75rem', marginLeft: plan === 'premium_subscription' ? '0.5rem' : 0 }} onClick={signOut}>Log out</button>
       </div>
+
+      <SavedCalculationsOverview />
 
       {isPremium && <BrandingSection />}
     </div>

@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type CalcStepData } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
+import { useSavedCalculations } from '../lib/useSavedCalculations';
+import SavedCalculations from '../components/SavedCalculations';
 import PremiumGate from '../components/PremiumGate';
 import { CELL_PRESETS, getCellPreset, solveBatteryPack } from '../lib/batteryPackPhysics';
 
@@ -35,6 +37,27 @@ export default function BatteryPackSeriesParallelCalculator() {
   const [seriesCount, setSeriesCount] = useState(13);
   const [parallelCount, setParallelCount] = useState(4);
   const [loadCurrentA, setLoadCurrentA] = useState(50);
+
+  const getInputs = useCallback((): Record<string, unknown> => ({
+    cellPresetId, nominalVoltage, capacityAh, internalResistanceMOhm, massG,
+    maxContinuousDischargeC, seriesCount, parallelCount, loadCurrentA,
+  }), [cellPresetId, nominalVoltage, capacityAh, internalResistanceMOhm, massG,
+    maxContinuousDischargeC, seriesCount, parallelCount, loadCurrentA]);
+
+  const restoreInputs = useCallback((inp: Record<string, unknown>) => {
+    const v = inp as Record<string, any>;
+    if (v.cellPresetId) { setCellPresetId(v.cellPresetId); const p = getCellPreset(v.cellPresetId); setNominalVoltage(p.nominalVoltage); setCapacityAh(p.capacityAh); setInternalResistanceMOhm(p.internalResistanceMOhm); setMassG(p.massG); setMaxContinuousDischargeC(p.maxContinuousDischargeC); }
+    if (v.nominalVoltage != null) setNominalVoltage(v.nominalVoltage);
+    if (v.capacityAh != null) setCapacityAh(v.capacityAh);
+    if (v.internalResistanceMOhm != null) setInternalResistanceMOhm(v.internalResistanceMOhm);
+    if (v.massG != null) setMassG(v.massG);
+    if (v.maxContinuousDischargeC != null) setMaxContinuousDischargeC(v.maxContinuousDischargeC);
+    if (v.seriesCount != null) setSeriesCount(v.seriesCount);
+    if (v.parallelCount != null) setParallelCount(v.parallelCount);
+    if (v.loadCurrentA != null) setLoadCurrentA(v.loadCurrentA);
+  }, []);
+
+  const saved = useSavedCalculations('battery-pack');
 
   const cell = useMemo(
     () => ({ ...preset, nominalVoltage, capacityAh, internalResistanceMOhm, massG, maxContinuousDischargeC }),
@@ -269,6 +292,10 @@ export default function BatteryPackSeriesParallelCalculator() {
 
         </div>
       </div>
+
+      <SavedCalculations saves={saved.saves} loading={saved.loading} loggedIn={saved.loggedIn}
+        onSave={(label) => saved.save(label, getInputs())} onLoad={restoreInputs}
+        onUpdate={(id) => saved.update(id, getInputs())} onRename={saved.rename} onDelete={saved.remove} />
 
       <div className="card" style={{ marginTop: '1.25rem' }}>
         <div className="card-title">Reference &amp; assumptions</div>

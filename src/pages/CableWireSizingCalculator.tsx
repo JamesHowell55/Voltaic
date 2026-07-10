@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type CalcStepData } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
+import { useSavedCalculations } from '../lib/useSavedCalculations';
+import SavedCalculations from '../components/SavedCalculations';
 import PremiumGate from '../components/PremiumGate';
 import InfoTooltip from '../components/InfoTooltip';
 import { MATERIALS, type Material } from '../lib/materials';
@@ -69,6 +71,42 @@ export default function CableWireSizingCalculator() {
 
   const [targetCurrentA, setTargetCurrentA] = useState(150);
   const [systemVoltage, setSystemVoltage] = useState(400);
+
+  const getInputs = useCallback((): Record<string, unknown> => ({
+    mode, materialId, sizeUnit, crossSectionMm2, awgSize, insulationId,
+    customMaxTempC, customThermalConductivity, insulationThicknessMm,
+    currentType, frequencyHz, ambientPresetId, customAmbientTempC,
+    conductorCountInBundle, lengthM, twoConductorCircuit,
+    targetCurrentA, systemVoltage,
+  }), [mode, materialId, sizeUnit, crossSectionMm2, awgSize, insulationId,
+    customMaxTempC, customThermalConductivity, insulationThicknessMm,
+    currentType, frequencyHz, ambientPresetId, customAmbientTempC,
+    conductorCountInBundle, lengthM, twoConductorCircuit,
+    targetCurrentA, systemVoltage]);
+
+  const restoreInputs = useCallback((inp: Record<string, unknown>) => {
+    const v = inp as Record<string, any>;
+    if (v.mode) setMode(v.mode);
+    if (v.materialId) setMaterialId(v.materialId);
+    if (v.sizeUnit) setSizeUnit(v.sizeUnit);
+    if (v.crossSectionMm2 != null) setCrossSectionMm2(v.crossSectionMm2);
+    if (v.awgSize != null) setAwgSize(v.awgSize);
+    if (v.insulationId) setInsulationId(v.insulationId);
+    if (v.customMaxTempC != null) setCustomMaxTempC(v.customMaxTempC);
+    if (v.customThermalConductivity != null) setCustomThermalConductivity(v.customThermalConductivity);
+    if (v.insulationThicknessMm != null) setInsulationThicknessMm(v.insulationThicknessMm);
+    if (v.currentType) setCurrentType(v.currentType);
+    if (v.frequencyHz != null) setFrequencyHz(v.frequencyHz);
+    if (v.ambientPresetId) setAmbientPresetId(v.ambientPresetId);
+    if (v.customAmbientTempC != null) setCustomAmbientTempC(v.customAmbientTempC);
+    if (v.conductorCountInBundle != null) setConductorCountInBundle(v.conductorCountInBundle);
+    if (v.lengthM != null) setLengthM(v.lengthM);
+    if (v.twoConductorCircuit != null) setTwoConductorCircuit(v.twoConductorCircuit);
+    if (v.targetCurrentA != null) setTargetCurrentA(v.targetCurrentA);
+    if (v.systemVoltage != null) setSystemVoltage(v.systemVoltage);
+  }, []);
+
+  const saved = useSavedCalculations('cable-wire-sizing');
 
   const effectiveInsulation = useMemo(
     () => (insulationId === 'custom' ? { ...insulation, maxTempC: customMaxTempC, thermalConductivity: customThermalConductivity } : insulation),
@@ -449,6 +487,10 @@ export default function CableWireSizingCalculator() {
 
         </div>
       </div>
+
+      <SavedCalculations saves={saved.saves} loading={saved.loading} loggedIn={saved.loggedIn}
+        onSave={(label) => saved.save(label, getInputs())} onLoad={restoreInputs}
+        onUpdate={(id) => saved.update(id, getInputs())} onRename={saved.rename} onDelete={saved.remove} />
 
       <div className="card" style={{ marginTop: '1.25rem' }}>
         <div className="card-title">Reference &amp; assumptions</div>

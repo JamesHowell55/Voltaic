@@ -1,11 +1,13 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import SkinDepthCrossSection from '../components/SkinDepthCrossSection';
+import SavedCalculations from '../components/SavedCalculations';
 import InfoTooltip from '../components/InfoTooltip';
 import { useTheme } from '../lib/ThemeContext';
 import { deriveAccentOnLight } from '../lib/theme';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData, type ReportDiagram } from '../lib/pdfExport';
 import { renderSkinDepthCrossSectionSvg } from '../lib/pdfDiagrams';
 import { useBranding } from '../lib/useBranding';
+import { useSavedCalculations } from '../lib/useSavedCalculations';
 import PremiumGate from '../components/PremiumGate';
 import {
   SKIN_DEPTH_MATERIALS,
@@ -49,6 +51,27 @@ export default function SkinDepthCalculator() {
   const frequencyHz = frequencySource === 'direct' ? directFrequencyHz : motorFrequencyHz;
 
   const [conductorDiameterMm, setConductorDiameterMm] = useState<number | ''>('');
+
+  const getInputs = useCallback((): Record<string, unknown> => ({
+    materialId, rho20, beta, muR, tempC, frequencySource, directFrequencyHz,
+    motorSpeedRpm, motorPolePairs, conductorDiameterMm,
+  }), [materialId, rho20, beta, muR, tempC, frequencySource, directFrequencyHz, motorSpeedRpm, motorPolePairs, conductorDiameterMm]);
+
+  const restoreInputs = useCallback((inp: Record<string, unknown>) => {
+    const v = inp as Record<string, any>;
+    if (v.materialId) { setMaterialId(v.materialId); const p = getSkinDepthMaterial(v.materialId); setRho20(p.rho20OhmMm2PerM); setBeta(p.beta); setMuR(p.muR); }
+    if (v.rho20 != null) setRho20(v.rho20);
+    if (v.beta != null) setBeta(v.beta);
+    if (v.muR != null) setMuR(v.muR);
+    if (v.tempC != null) setTempC(v.tempC);
+    if (v.frequencySource) setFrequencySource(v.frequencySource);
+    if (v.directFrequencyHz != null) setDirectFrequencyHz(v.directFrequencyHz);
+    if (v.motorSpeedRpm != null) setMotorSpeedRpm(v.motorSpeedRpm);
+    if (v.motorPolePairs != null) setMotorPolePairs(v.motorPolePairs);
+    if (v.conductorDiameterMm != null) setConductorDiameterMm(v.conductorDiameterMm);
+  }, []);
+
+  const saved = useSavedCalculations('skin-depth');
 
   const rhoAtTemp = useMemo(() => resistivityAtOhmMm2PerM(rho20, beta, tempC), [rho20, beta, tempC]);
   const skinDepthMmValue = useMemo(() => skinDepthMm(rhoAtTemp, frequencyHz, muR), [rhoAtTemp, frequencyHz, muR]);
@@ -273,6 +296,10 @@ export default function SkinDepthCalculator() {
 
         </div>
       </div>
+
+      <SavedCalculations saves={saved.saves} loading={saved.loading} loggedIn={saved.loggedIn}
+        onSave={(label) => saved.save(label, getInputs())} onLoad={restoreInputs}
+        onUpdate={(id) => saved.update(id, getInputs())} onRename={saved.rename} onDelete={saved.remove} />
 
       <div className="card" style={{ marginTop: '1.25rem' }}>
         <div className="card-title">Reference &amp; assumptions</div>

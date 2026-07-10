@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
@@ -6,6 +6,8 @@ import PremiumGate from '../components/PremiumGate';
 import InfoTooltip from '../components/InfoTooltip';
 import LossBreakdownBars, { type LossBar } from '../components/LossBreakdownBars';
 import { renderLossBreakdownSvg, type PdfLossBar } from '../lib/pdfDiagrams';
+import SavedCalculations from '../components/SavedCalculations';
+import { useSavedCalculations } from '../lib/useSavedCalculations';
 import { SIC_DEVICE_PRESETS, getSicDevice, inverterStructureLabel, type SicDevicePreset } from '../lib/sicDevices';
 import { fundamentalElectricalFreqHz } from '../lib/chokePhysics';
 import {
@@ -64,6 +66,37 @@ export default function MosfetLossCalculator() {
   const updateStep = (i: number, patch: Partial<DutyStep>) => {
     setDutySteps((steps) => steps.map((s, j) => (j === i ? { ...s, ...patch } : s)));
   };
+
+  const getInputs = useCallback((): Record<string, unknown> => ({
+    deviceId, device, parallelCount, vdc, switchingFreqKhz, modulationIndex,
+    cosPhiMag, deadTimeNs, caseTempC, syncRect, voltageExponent,
+    motorPolePairs, motorSpeedRpm, analysisMode, phaseCurrentArms, driveMode, dutySteps,
+  }), [deviceId, device, parallelCount, vdc, switchingFreqKhz, modulationIndex,
+    cosPhiMag, deadTimeNs, caseTempC, syncRect, voltageExponent,
+    motorPolePairs, motorSpeedRpm, analysisMode, phaseCurrentArms, driveMode, dutySteps]);
+
+  const restoreInputs = useCallback((inp: Record<string, unknown>) => {
+    const v = inp as Record<string, any>;
+    if (v.deviceId != null) setDeviceId(v.deviceId);
+    if (v.device != null) setDevice(v.device as SicDevicePreset);
+    if (v.parallelCount != null) setParallelCount(v.parallelCount);
+    if (v.vdc != null) setVdc(v.vdc);
+    if (v.switchingFreqKhz != null) setSwitchingFreqKhz(v.switchingFreqKhz);
+    if (v.modulationIndex != null) setModulationIndex(v.modulationIndex);
+    if (v.cosPhiMag != null) setCosPhiMag(v.cosPhiMag);
+    if (v.deadTimeNs != null) setDeadTimeNs(v.deadTimeNs);
+    if (v.caseTempC != null) setCaseTempC(v.caseTempC);
+    if (v.syncRect != null) setSyncRect(v.syncRect);
+    if (v.voltageExponent != null) setVoltageExponent(v.voltageExponent);
+    if (v.motorPolePairs != null) setMotorPolePairs(v.motorPolePairs);
+    if (v.motorSpeedRpm != null) setMotorSpeedRpm(v.motorSpeedRpm);
+    if (v.analysisMode != null) setAnalysisMode(v.analysisMode);
+    if (v.phaseCurrentArms != null) setPhaseCurrentArms(v.phaseCurrentArms);
+    if (v.driveMode != null) setDriveMode(v.driveMode);
+    if (v.dutySteps != null) setDutySteps(v.dutySteps);
+  }, []);
+
+  const saved = useSavedCalculations('mosfet-loss');
 
   // Reset current to something sensible when switching to a small discrete device
   useEffect(() => {
@@ -587,6 +620,10 @@ export default function MosfetLossCalculator() {
 
         </div>
       </div>
+
+      <SavedCalculations saves={saved.saves} loading={saved.loading} loggedIn={saved.loggedIn}
+        onSave={(label) => saved.save(label, getInputs())} onLoad={restoreInputs}
+        onUpdate={(id) => saved.update(id, getInputs())} onRename={saved.rename} onDelete={saved.remove} />
 
       <div className="card" style={{ marginTop: '1.25rem' }}>
         <div className="card-title">Reference &amp; assumptions</div>
