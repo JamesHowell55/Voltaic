@@ -969,7 +969,7 @@ export default function BusbarCalculator() {
                   <th>{busbarType === 'single' ? 'Section' : 'Bundle'}</th>
                   <th>Area (mm²)</th>
                   {durationMode !== 'profile' && <th>Current density (A/mm²)</th>}
-                  {durationMode === 'continuous' && steady && <th>Rac (µΩ)</th>}
+                  {durationMode === 'continuous' && steady && <th>Rac (<span style={{ textTransform: 'none' }}>µΩ</span>)</th>}
                   <th>Loss {durationMode === 'continuous' ? '(W)' : '(kJ)'}</th>
                   {durationMode === 'continuous' && steady && anySectionCooled && <th>Coolant (W)</th>}
                   <th>{durationMode === 'profile' ? 'Peak temp (°C)' : durationMode === 'fault' ? 'Final temp (°C)' : 'Temp (°C)'}</th>
