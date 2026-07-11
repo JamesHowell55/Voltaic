@@ -3,6 +3,8 @@ import SkinDepthCrossSection from '../components/SkinDepthCrossSection';
 import SavedCalculations from '../components/SavedCalculations';
 import InfoTooltip from '../components/InfoTooltip';
 import { useTheme } from '../lib/ThemeContext';
+import { useUnitSystem } from '../lib/UnitSystemContext';
+import { toDisplay, fromDisplay, unitLabel, UNIT_LENGTH, UNIT_AREA, UNIT_TEMP } from '../lib/globalUnits';
 import { deriveAccentOnLight } from '../lib/theme';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData, type ReportDiagram } from '../lib/pdfExport';
 import { renderSkinDepthCrossSectionSvg } from '../lib/pdfDiagrams';
@@ -23,11 +25,16 @@ function fmt(n: number, digits = 2): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 }
 
+function fmtU(valueSI: number, unitSystem: ReturnType<typeof useUnitSystem>['unitSystem'], def: Parameters<typeof toDisplay>[2], digits = 2): string {
+  return fmt(toDisplay(valueSI, unitSystem, def), digits);
+}
+
 type FrequencySource = 'direct' | 'motor';
 
 export default function SkinDepthCalculator() {
   const { accentHex } = useTheme();
   const branding = useBranding();
+  const { unitSystem } = useUnitSystem();
 
   const [materialId, setMaterialId] = useState('copper');
   const preset = getSkinDepthMaterial(materialId);
@@ -121,13 +128,13 @@ export default function SkinDepthCalculator() {
       { label: 'Material', value: getSkinDepthMaterial(materialId).name },
       { label: 'Resistivity (20°C)', value: `${fmt(rho20, 4)} Ω·mm²/m` },
       { label: 'Relative permeability µr', value: fmt(muR, 3) },
-      { label: 'Operating temperature', value: `${fmt(tempC, 0)}°C` },
+      { label: 'Operating temperature', value: `${fmtU(tempC, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)}` },
       { label: 'Frequency source', value: frequencySource === 'direct' ? 'Direct entry' : `Motor speed (${motorSpeedRpm} rpm, ${motorPolePairs} pole pairs)` },
       { label: 'Frequency', value: `${fmt(frequencyHz, 1)} Hz` },
     ];
-    if (hasConductorSize) rows.push({ label: 'Conductor diameter', value: `${fmt(conductorDiameterMm as number, 2)} mm` });
+    if (hasConductorSize) rows.push({ label: 'Conductor diameter', value: `${fmtU(conductorDiameterMm as number, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` });
     return [{ heading: 'Inputs', rows }];
-  }, [materialId, rho20, muR, tempC, frequencySource, motorSpeedRpm, motorPolePairs, frequencyHz, hasConductorSize, conductorDiameterMm]);
+  }, [materialId, rho20, muR, tempC, frequencySource, motorSpeedRpm, motorPolePairs, frequencyHz, hasConductorSize, conductorDiameterMm, unitSystem]);
 
   const outputSections: ReportSection[] = useMemo(() => {
     const rows: ReportRow[] = [
@@ -135,10 +142,10 @@ export default function SkinDepthCalculator() {
       { label: 'Resistivity at operating temperature', value: `${fmt(rhoAtTemp, 4)} Ω·mm²/m` },
     ];
     if (hasConductorSize && effectiveAreaMm2 !== null && fullAreaMm2 !== null && areaUtilizationPercent !== null) {
-      rows.push({ label: 'Effective conduction area', value: `${fmt(effectiveAreaMm2, 3)} mm² of ${fmt(fullAreaMm2, 3)} mm² (${fmt(areaUtilizationPercent, 1)}%)` });
+      rows.push({ label: 'Effective conduction area', value: `${fmtU(effectiveAreaMm2, unitSystem, UNIT_AREA, 3)} ${unitLabel(unitSystem, UNIT_AREA)} of ${fmtU(fullAreaMm2, unitSystem, UNIT_AREA, 3)} ${unitLabel(unitSystem, UNIT_AREA)} (${fmt(areaUtilizationPercent, 1)}%)` });
     }
     return [{ heading: 'Results', rows }];
-  }, [skinDepthMmValue, rhoAtTemp, hasConductorSize, effectiveAreaMm2, fullAreaMm2, areaUtilizationPercent]);
+  }, [skinDepthMmValue, rhoAtTemp, hasConductorSize, effectiveAreaMm2, fullAreaMm2, areaUtilizationPercent, unitSystem]);
 
   const handleExportPdf = () => {
     const pdfAccent = deriveAccentOnLight(accentHex);
@@ -213,8 +220,8 @@ export default function SkinDepthCalculator() {
               </div>
               <div className="field">
                 <label>Operating temperature</label>
-                <input autoComplete="off" type="number" value={tempC} onChange={e => setTempC(Number(e.target.value))} />
-                <span className="hint">°C — resistivity (and so skin depth) rises somewhat with temperature.</span>
+                <input autoComplete="off" type="number" value={toDisplay(tempC, unitSystem, UNIT_TEMP)} onChange={e => setTempC(fromDisplay(Number(e.target.value), unitSystem, UNIT_TEMP))} />
+                <span className="hint">{unitLabel(unitSystem, UNIT_TEMP)} — resistivity (and so skin depth) rises somewhat with temperature.</span>
               </div>
             </div>
           </div>
@@ -256,8 +263,8 @@ export default function SkinDepthCalculator() {
                 Conductor diameter
                 <InfoTooltip>Skin depth itself doesn't depend on conductor size — but entering a real diameter scales the graphic accurately and computes an illustrative "how much of my conductor is actually carrying current" area estimate. Leave blank to just see the skin depth number and a generic (proportionally-scaled) illustration.</InfoTooltip>
               </label>
-              <input autoComplete="off" type="number" min={0} step={0.1} value={conductorDiameterMm} onChange={e => setConductorDiameterMm(e.target.value === '' ? '' : Number(e.target.value))} placeholder="e.g. 10" />
-              <span className="hint">mm — round conductor assumed. Leave blank for an illustrative-only graphic.</span>
+              <input autoComplete="off" type="number" min={0} step={0.1} value={conductorDiameterMm === '' ? '' : toDisplay(conductorDiameterMm, unitSystem, UNIT_LENGTH)} onChange={e => setConductorDiameterMm(e.target.value === '' ? '' : fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} placeholder={unitSystem === 'imperial' ? 'e.g. 0.4' : 'e.g. 10'} />
+              <span className="hint">{unitLabel(unitSystem, UNIT_LENGTH)} — round conductor assumed. Leave blank for an illustrative-only graphic.</span>
             </div>
           </div>
         </div>
@@ -269,13 +276,13 @@ export default function SkinDepthCalculator() {
             <div className="result-grid">
               <div className="result-tile">
                 <div className="label">Skin depth</div>
-                <div className="value">{isFinite(skinDepthMmValue) ? fmt(skinDepthMmValue, 4) : '∞'}<span className="unit">mm</span></div>
+                <div className="value">{isFinite(skinDepthMmValue) ? fmtU(skinDepthMmValue, unitSystem, UNIT_LENGTH, 4) : '∞'}<span className="unit">{unitLabel(unitSystem, UNIT_LENGTH)}</span></div>
                 <div className="hint">
                   {isFinite(skinDepthMmValue) ? `${fmt(skinDepthMmValue * 1000, 1)} µm · ${fmt(skinDepthMmValue / 25.4, 4)} in` : 'DC — no skin effect'}
                 </div>
               </div>
               <div className="result-tile">
-                <div className="label">Resistivity @ {fmt(tempC, 0)}°C</div>
+                <div className="label">Resistivity @ {fmtU(tempC, unitSystem, UNIT_TEMP, 0)}{unitLabel(unitSystem, UNIT_TEMP)}</div>
                 <div className="value">{fmt(rhoAtTemp, 4)}<span className="unit">Ω·mm²/m</span></div>
                 <div className="hint">{(rhoAtTemp * 1e-6).toExponential(3)} Ω·m</div>
               </div>
@@ -283,7 +290,7 @@ export default function SkinDepthCalculator() {
                 <div className="result-tile">
                   <div className="label">Effective conduction area</div>
                   <div className="value">{fmt(areaUtilizationPercent, 1)}<span className="unit">%</span></div>
-                  <div className="hint">{fmt(effectiveAreaMm2, 2)} mm² of {fmt(fullAreaMm2, 2)} mm² total</div>
+                  <div className="hint">{fmtU(effectiveAreaMm2, unitSystem, UNIT_AREA, 3)} {unitLabel(unitSystem, UNIT_AREA)} of {fmtU(fullAreaMm2, unitSystem, UNIT_AREA, 3)} {unitLabel(unitSystem, UNIT_AREA)} total</div>
                 </div>
               )}
             </div>

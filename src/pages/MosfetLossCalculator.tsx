@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
+import { useUnitSystem } from '../lib/UnitSystemContext';
+import { toDisplay, fromDisplay, unitLabel, UNIT_TEMP } from '../lib/globalUnits';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
 import PremiumGate from '../components/PremiumGate';
@@ -20,6 +22,10 @@ function fmt(n: number, digits = 2): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 }
 
+function fmtU(valueSI: number, unitSystem: ReturnType<typeof useUnitSystem>['unitSystem'], def: Parameters<typeof toDisplay>[2], digits = 2): string {
+  return fmt(toDisplay(valueSI, unitSystem, def), digits);
+}
+
 type AnalysisMode = 'single' | 'duty';
 type DriveMode = 'motor' | 'generator';
 
@@ -28,6 +34,7 @@ const MANUFACTURER_ORDER = ['Wolfspeed', 'Infineon', 'ST', 'Hitachi Energy', 'Cu
 export default function MosfetLossCalculator() {
   const { accentHex } = useTheme();
   const branding = useBranding();
+  const { unitSystem } = useUnitSystem();
 
   // Device selection + editable parameter copy (auto-fill-then-editable preset pattern)
   const [deviceId, setDeviceId] = useState('imbg120r008m2h');
@@ -228,10 +235,10 @@ export default function MosfetLossCalculator() {
       { label: 'Device', value: `${device.manufacturer} ${device.partNumber}` },
       { label: 'Package / topology', value: `${device.packageLabel}${device.topsideCooled ? ' (top-side cooled)' : ''}` },
       { label: 'Structure', value: inverterStructureLabel(device.topology, parallelCount) },
-      { label: 'RDS(on)', value: `${fmt(device.rdsOn25mOhm, 2)} mΩ @25°C / ${fmt(device.rdsOnHotmOhm, 2)} mΩ @${device.rdsOnHotTempC}°C` },
+      { label: 'RDS(on)', value: `${fmt(device.rdsOn25mOhm, 2)} mΩ @25°C / ${fmt(device.rdsOnHotmOhm, 2)} mΩ @${fmtU(device.rdsOnHotTempC, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)}` },
       { label: 'Eon / Eoff', value: `${fmt(device.eOnMj, 2)} / ${fmt(device.eOffMj, 2)} mJ @ ${device.eTestVdcV} V, ${device.eTestCurrentA} A` },
       { label: 'Err / Qrr', value: `${device.eRrMj > 0 ? `${fmt(device.eRrMj, 2)} mJ` : '—'} / ${fmt(device.qrrUc, 2)} µC` },
-      { label: 'VSD / RthJC / Tvj(max)', value: `${fmt(device.vsdV, 1)} V / ${fmt(device.rthJcKPerW, 3)} K/W / ${fmt(device.tvjMaxC, 0)}°C` },
+      { label: 'VSD / RthJC / Tvj(max)', value: `${fmt(device.vsdV, 1)} V / ${fmt(device.rthJcKPerW, 3)} K/W / ${fmtU(device.tvjMaxC, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)}` },
       { label: 'Parameter provenance', value: device.sourced ? 'Datasheet-transcribed values' : 'Representative estimates (headline specs verified) — refine from the device datasheet' },
     ];
     const opRows: ReportRow[] = [
@@ -239,7 +246,7 @@ export default function MosfetLossCalculator() {
       { label: 'Switching frequency', value: `${fmt(switchingFreqKhz, 1)} kHz` },
       { label: 'Modulation index / |cosφ|', value: `${fmt(modulationIndex, 2)} / ${fmt(cosPhiMag, 2)}` },
       { label: 'Dead time', value: `${fmt(deadTimeNs, 0)} ns` },
-      { label: 'Case/heatsink temperature', value: `${fmt(caseTempC, 0)}°C` },
+      { label: 'Case/heatsink temperature', value: `${fmtU(caseTempC, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)}` },
       { label: 'Synchronous rectification', value: syncRect ? 'On' : 'Off (classic channel/diode split)' },
       { label: 'Voltage scaling exponent kv', value: fmt(voltageExponent, 2) },
       { label: 'Motor speed / pole pairs', value: `${fmt(motorSpeedRpm, 0)} rpm / ${motorPolePairs} (f1 = ${fmt(f1Hz, 1)} Hz)` },
@@ -258,7 +265,7 @@ export default function MosfetLossCalculator() {
       { heading: 'Operating point', rows: opRows },
       { heading: isDuty ? 'Duty cycle profile' : 'Load condition', rows: loadRows },
     ];
-  }, [device, parallelCount, vdc, switchingFreqKhz, modulationIndex, cosPhiMag, deadTimeNs, caseTempC, syncRect, voltageExponent, motorSpeedRpm, motorPolePairs, f1Hz, isDuty, dutySteps, phaseCurrentArms, driveMode]);
+  }, [device, parallelCount, vdc, switchingFreqKhz, modulationIndex, cosPhiMag, deadTimeNs, caseTempC, syncRect, voltageExponent, motorSpeedRpm, motorPolePairs, f1Hz, isDuty, dutySteps, phaseCurrentArms, driveMode, unitSystem]);
 
   const outputSections: ReportSection[] = useMemo(() => {
     const r = headline;
@@ -273,7 +280,7 @@ export default function MosfetLossCalculator() {
     ];
     const totalsRows: ReportRow[] = [
       { label: 'Whole-inverter loss', value: `${fmt(r.inverterTotalW, 1)} W` },
-      { label: 'Junction temperature', value: `${fmt(r.junctionTempC, 1)}°C (limit ${fmt(device.tvjMaxC, 0)}°C)` },
+      { label: 'Junction temperature', value: `${fmtU(r.junctionTempC, unitSystem, UNIT_TEMP, 1)}${unitLabel(unitSystem, UNIT_TEMP)} (limit ${fmtU(device.tvjMaxC, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)})` },
       { label: 'Output power', value: `${fmt(r.outputPowerW / 1000, 1)} kW` },
       { label: 'Efficiency', value: `${fmt(r.efficiencyPercent, 3)}%` },
       ...(isDuty ? [
@@ -286,7 +293,7 @@ export default function MosfetLossCalculator() {
       { heading: isDuty ? 'Per-device losses (worst duty step)' : 'Per-device losses', rows: breakdownRows },
       { heading: 'Inverter totals', rows: totalsRows },
     ];
-  }, [headline, device.tvjMaxC, isDuty, duty]);
+  }, [headline, device.tvjMaxC, isDuty, duty, unitSystem]);
 
   const handleExportPdf = () => {
     const pdfBars: PdfLossBar[] = lossBars.map((b) => ({ ...b }));
@@ -366,8 +373,8 @@ export default function MosfetLossCalculator() {
                 <input autoComplete="off" type="number" min={0} step={0.1} value={device.rdsOnHotmOhm} onChange={(e) => setDeviceField('rdsOnHotmOhm', Number(e.target.value))} />
               </div>
               <div className="field">
-                <label>Hot temp (°C)</label>
-                <input autoComplete="off" type="number" min={26} value={device.rdsOnHotTempC} onChange={(e) => setDeviceField('rdsOnHotTempC', Number(e.target.value))} />
+                <label>Hot temp ({unitLabel(unitSystem, UNIT_TEMP)})</label>
+                <input autoComplete="off" type="number" value={toDisplay(device.rdsOnHotTempC, unitSystem, UNIT_TEMP)} onChange={(e) => setDeviceField('rdsOnHotTempC', fromDisplay(Number(e.target.value), unitSystem, UNIT_TEMP))} />
               </div>
               <div className="field">
                 <label>Eon (mJ)</label>
@@ -407,8 +414,8 @@ export default function MosfetLossCalculator() {
                 <input autoComplete="off" type="number" min={0} step={0.001} value={device.rthJcKPerW} onChange={(e) => setDeviceField('rthJcKPerW', Number(e.target.value))} />
               </div>
               <div className="field">
-                <label>Tvj max (°C)</label>
-                <input autoComplete="off" type="number" min={0} value={device.tvjMaxC} onChange={(e) => setDeviceField('tvjMaxC', Number(e.target.value))} />
+                <label>Tvj max ({unitLabel(unitSystem, UNIT_TEMP)})</label>
+                <input autoComplete="off" type="number" value={toDisplay(device.tvjMaxC, unitSystem, UNIT_TEMP)} onChange={(e) => setDeviceField('tvjMaxC', fromDisplay(Number(e.target.value), unitSystem, UNIT_TEMP))} />
               </div>
               <div className="field">
                 <label>QG total (nC)</label>
@@ -445,8 +452,8 @@ export default function MosfetLossCalculator() {
                 <input autoComplete="off" type="number" min={0} step={50} value={deadTimeNs} onChange={(e) => setDeadTimeNs(Number(e.target.value))} />
               </div>
               <div className="field">
-                <label>Case/heatsink temperature (°C)</label>
-                <input autoComplete="off" type="number" value={caseTempC} onChange={(e) => setCaseTempC(Number(e.target.value))} />
+                <label>Case/heatsink temperature ({unitLabel(unitSystem, UNIT_TEMP)})</label>
+                <input autoComplete="off" type="number" value={toDisplay(caseTempC, unitSystem, UNIT_TEMP)} onChange={(e) => setCaseTempC(fromDisplay(Number(e.target.value), unitSystem, UNIT_TEMP))} />
               </div>
               <div className="field">
                 <label>Motor pole pairs</label>
@@ -545,10 +552,10 @@ export default function MosfetLossCalculator() {
 
             <div className={`status-banner ${overallPass ? 'pass' : 'fail'}`}>
               {overallPass
-                ? `✓ Tj ${fmt(worstTj, 1)}°C within Tvj(max) ${fmt(device.tvjMaxC, 0)}°C`
+                ? `✓ Tj ${fmtU(worstTj, unitSystem, UNIT_TEMP, 1)}${unitLabel(unitSystem, UNIT_TEMP)} within Tvj(max) ${fmtU(device.tvjMaxC, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)}`
                 : thermalRunaway
-                  ? `✗ Thermal runaway — operating point exceeds device capability; Rds(on)/Tj model is invalid beyond Tvj(max) ${fmt(device.tvjMaxC, 0)}°C (last iterated estimate ${fmt(worstTj, 0)}°C is not a real value)`
-                  : `✗ ${!tjPass ? `Tj ${fmt(worstTj, 1)}°C exceeds Tvj(max) ${fmt(device.tvjMaxC, 0)}°C` : `Device peak current ${fmt(devicePeakCurrentA, 0)} A exceeds rating`}`}
+                  ? `✗ Thermal runaway — operating point exceeds device capability; Rds(on)/Tj model is invalid beyond Tvj(max) ${fmtU(device.tvjMaxC, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)} (last iterated estimate ${fmtU(worstTj, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)} is not a real value)`
+                  : `✗ ${!tjPass ? `Tj ${fmtU(worstTj, unitSystem, UNIT_TEMP, 1)}${unitLabel(unitSystem, UNIT_TEMP)} exceeds Tvj(max) ${fmtU(device.tvjMaxC, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)}` : `Device peak current ${fmt(devicePeakCurrentA, 0)} A exceeds rating`}`}
             </div>
 
             <div className="result-grid">
@@ -565,9 +572,9 @@ export default function MosfetLossCalculator() {
               <div className="result-tile">
                 <div className="label">Junction temperature</div>
                 <div className={`value ${tjPass ? 'pos' : 'neg'}`}>
-                  {thermalRunaway ? `>${fmt(2 * device.tvjMaxC, 0)}` : fmt(worstTj, 1)}<span className="unit">°C</span>
+                  {thermalRunaway ? `>${fmtU(2 * device.tvjMaxC, unitSystem, UNIT_TEMP, 0)}` : fmtU(worstTj, unitSystem, UNIT_TEMP, 1)}<span className="unit">{unitLabel(unitSystem, UNIT_TEMP)}</span>
                 </div>
-                <div className="hint">{thermalRunaway ? 'thermal runaway — model invalid beyond this point' : `case ${fmt(caseTempC, 0)}°C, RthJC ${fmt(device.rthJcKPerW, 3)} K/W`}</div>
+                <div className="hint">{thermalRunaway ? 'thermal runaway — model invalid beyond this point' : `case ${fmtU(caseTempC, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)}, RthJC ${fmt(device.rthJcKPerW, 3)} K/W`}</div>
               </div>
               <div className="result-tile">
                 <div className="label">Output power</div>
@@ -597,7 +604,7 @@ export default function MosfetLossCalculator() {
               <div className="card-title">Duty cycle steps</div>
               <table className="data-table" style={{ width: '100%', fontSize: '0.8rem' }}>
                 <thead>
-                  <tr><th>Step</th><th>Load</th><th>Loss (W)</th><th>Tj (°C)</th><th>η (%)</th></tr>
+                  <tr><th>Step</th><th>Load</th><th>Loss (W)</th><th>Tj ({unitLabel(unitSystem, UNIT_TEMP)})</th><th>η (%)</th></tr>
                 </thead>
                 <tbody>
                   {duty.perStep.map((r, i) => {
@@ -607,7 +614,7 @@ export default function MosfetLossCalculator() {
                         <td>{i + 1}{i === duty.worstStepIndex ? ' ★' : ''}</td>
                         <td>{fmt(dutySteps[i].phaseCurrentArms, 0)} A, m={fmt(dutySteps[i].modulationIndex, 2)}, {dutySteps[i].mode === 'generator' ? 'gen' : 'mot'}</td>
                         <td>{stepRunaway ? 'N/A' : fmt(r.inverterTotalW, 0)}</td>
-                        <td className={stepRunaway ? 'fail' : undefined}>{stepRunaway ? `>${fmt(2 * device.tvjMaxC, 0)} ⚠` : fmt(r.junctionTempC, 1)}</td>
+                        <td className={stepRunaway ? 'fail' : undefined}>{stepRunaway ? `>${fmtU(2 * device.tvjMaxC, unitSystem, UNIT_TEMP, 0)} ⚠` : fmtU(r.junctionTempC, unitSystem, UNIT_TEMP, 1)}</td>
                         <td>{stepRunaway ? 'N/A' : fmt(r.efficiencyPercent, 2)}</td>
                       </tr>
                     );

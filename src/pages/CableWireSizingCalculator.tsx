@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
+import { useUnitSystem } from '../lib/UnitSystemContext';
+import { toDisplay, fromDisplay, unitLabel, UNIT_LENGTH, UNIT_LENGTH_M, UNIT_TEMP } from '../lib/globalUnits';
 import { exportReportToPdf, type ReportSection, type CalcStepData } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
 import { useSavedCalculations } from '../lib/useSavedCalculations';
@@ -23,6 +25,10 @@ function fmt(n: number, digits = 2): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 }
 
+function fmtU(valueSI: number, unitSystem: ReturnType<typeof useUnitSystem>['unitSystem'], def: Parameters<typeof toDisplay>[2], digits = 2): string {
+  return fmt(toDisplay(valueSI, unitSystem, def), digits);
+}
+
 // AWG <-> mm² (standard formula, matches the Wire Gauge conversion category)
 function awgToMm2(awg: number): number {
   const diameterIn = 0.005 * Math.pow(92, (36 - awg) / 39);
@@ -42,6 +48,7 @@ type SizeUnit = 'mm2' | 'awg';
 export default function CableWireSizingCalculator() {
   const { accentHex } = useTheme();
   const branding = useBranding();
+  const { unitSystem } = useUnitSystem();
 
   const [mode, setMode] = useState<SolveMode>('ampacity');
   const [materialId, setMaterialId] = useState<'copper' | 'aluminium'>('copper');
@@ -206,19 +213,19 @@ export default function CableWireSizingCalculator() {
         { label: 'Material', value: material.name },
         { label: 'Cross-section', value: sizeUnit === 'mm2' ? `${effectiveCrossSectionMm2} mm²` : `AWG ${awgSize} (${fmt(effectiveCrossSectionMm2, 2)} mm²)` },
         { label: 'Insulation', value: effectiveInsulation.label },
-        { label: 'Insulation thickness', value: `${insulationThicknessMm} mm` },
+        { label: 'Insulation thickness', value: `${fmtU(insulationThicknessMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` },
       ],
     },
     {
       heading: 'Operating conditions',
       rows: [
         { label: 'Current type', value: currentType === 'ac' ? `AC (${frequencyHz} Hz)` : 'DC' },
-        { label: 'Ambient temperature', value: `${fmt(ambientTempC, 0)}°C` },
+        { label: 'Ambient temperature', value: `${fmtU(ambientTempC, unitSystem, UNIT_TEMP, 1)}${unitLabel(unitSystem, UNIT_TEMP)}` },
         { label: 'Conductors in bundle', value: `${conductorCountInBundle}` },
-        { label: 'Cable length (one-way)', value: `${lengthM} m` },
+        { label: 'Cable length (one-way)', value: `${fmtU(lengthM, unitSystem, UNIT_LENGTH_M, 3)} ${unitLabel(unitSystem, UNIT_LENGTH_M)}` },
       ],
     },
-  ], [material, sizeUnit, effectiveCrossSectionMm2, awgSize, effectiveInsulation, insulationThicknessMm, currentType, frequencyHz, ambientTempC, conductorCountInBundle, lengthM]);
+  ], [material, sizeUnit, effectiveCrossSectionMm2, awgSize, effectiveInsulation, insulationThicknessMm, currentType, frequencyHz, ambientTempC, conductorCountInBundle, lengthM, unitSystem]);
 
   const outputSections: ReportSection[] = useMemo(() => [
     {
@@ -229,7 +236,7 @@ export default function CableWireSizingCalculator() {
           { label: 'Bundling factor', value: fmt(bundlingFactor, 2) },
         ]
         : [
-          { label: 'Conductor temperature', value: `${fmt(result.conductorTempC ?? 0, 1)}°C` },
+          { label: 'Conductor temperature', value: `${fmtU(result.conductorTempC ?? 0, unitSystem, UNIT_TEMP, 1)}${unitLabel(unitSystem, UNIT_TEMP)}` },
           { label: 'Pass vs insulation limit', value: result.conductorTempPass ? 'Pass' : 'Fail' },
           { label: 'Voltage drop', value: `${fmt(result.voltageDropV ?? 0, 2)} V${result.voltageDropPercent !== null ? ` (${fmt(result.voltageDropPercent, 2)}%)` : ''}` },
         ],
@@ -241,7 +248,7 @@ export default function CableWireSizingCalculator() {
         { label: 'Total thermal resistance', value: `${fmt(result.totalThermalResistancePerMetre, 4)} K·m/W` },
       ],
     },
-  ], [mode, result, bundlingFactor]);
+  ], [mode, result, bundlingFactor, unitSystem]);
 
   const handleExportPdf = () => {
     exportReportToPdf({
@@ -346,8 +353,8 @@ export default function CableWireSizingCalculator() {
               {insulationId === 'custom' && (
                 <>
                   <div className="field">
-                    <label>Max conductor temperature (°C)</label>
-                    <input autoComplete="off" type="number" value={customMaxTempC} onChange={(e) => setCustomMaxTempC(Number(e.target.value))} />
+                    <label>Max conductor temperature ({unitLabel(unitSystem, UNIT_TEMP)})</label>
+                    <input autoComplete="off" type="number" value={toDisplay(customMaxTempC, unitSystem, UNIT_TEMP)} onChange={(e) => setCustomMaxTempC(fromDisplay(Number(e.target.value), unitSystem, UNIT_TEMP))} />
                   </div>
                   <div className="field">
                     <label>Insulation thermal conductivity (W/m·K)</label>
@@ -356,8 +363,8 @@ export default function CableWireSizingCalculator() {
                 </>
               )}
               <div className="field">
-                <label>Insulation wall thickness (mm)</label>
-                <input autoComplete="off" type="number" min={0.1} step={0.1} value={insulationThicknessMm} onChange={(e) => setInsulationThicknessMm(Number(e.target.value))} />
+                <label>Insulation wall thickness ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                <input autoComplete="off" type="number" min={0.001} step={0.001} value={toDisplay(insulationThicknessMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setInsulationThicknessMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
               </div>
             </div>
           </div>
@@ -387,7 +394,7 @@ export default function CableWireSizingCalculator() {
                   ))}
                 </div>
                 {ambientPresetId === 'custom' ? (
-                  <input autoComplete="off" type="number" style={{ marginTop: '0.5rem' }} value={customAmbientTempC} onChange={(e) => setCustomAmbientTempC(Number(e.target.value))} />
+                  <input autoComplete="off" type="number" style={{ marginTop: '0.5rem' }} value={toDisplay(customAmbientTempC, unitSystem, UNIT_TEMP)} onChange={(e) => setCustomAmbientTempC(fromDisplay(Number(e.target.value), unitSystem, UNIT_TEMP))} />
                 ) : (
                   <span className="hint">{ambientPreset.label}</span>
                 )}
@@ -407,8 +414,8 @@ export default function CableWireSizingCalculator() {
                 <span className="hint">Derating factor: {fmt(bundlingFactor, 2)}</span>
               </div>
               <div className="field">
-                <label>Cable length, one-way (m)</label>
-                <input autoComplete="off" type="number" min={0} step={0.1} value={lengthM} onChange={(e) => setLengthM(Number(e.target.value))} />
+                <label>Cable length, one-way ({unitLabel(unitSystem, UNIT_LENGTH_M)})</label>
+                <input autoComplete="off" type="number" min={0} step={0.1} value={toDisplay(lengthM, unitSystem, UNIT_LENGTH_M)} onChange={(e) => setLengthM(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH_M))} />
               </div>
               <div className="field" style={{ gridColumn: '1 / -1' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -462,9 +469,9 @@ export default function CableWireSizingCalculator() {
                   <div className="result-tile">
                     <div className="label">Conductor temperature</div>
                     <div className={`value ${result.conductorTempPass === false ? 'neg' : result.conductorTempPass === true ? 'pos' : ''}`}>
-                      {fmt(result.conductorTempC ?? 0, 1)}<span className="unit">°C</span>
+                      {fmtU(result.conductorTempC ?? 0, unitSystem, UNIT_TEMP, 1)}<span className="unit">{unitLabel(unitSystem, UNIT_TEMP)}</span>
                     </div>
-                    <div className="hint">limit {fmt(effectiveInsulation.maxTempC, 0)}°C</div>
+                    <div className="hint">limit {fmtU(effectiveInsulation.maxTempC, unitSystem, UNIT_TEMP, 0)}{unitLabel(unitSystem, UNIT_TEMP)}</div>
                   </div>
                   <div className="result-tile">
                     <div className="label">Voltage drop</div>
@@ -475,8 +482,8 @@ export default function CableWireSizingCalculator() {
               )}
               <div className="result-tile">
                 <div className="label">Conductor / outer diameter</div>
-                <div className="value">{fmt(result.conductorDiameterMm, 2)}<span className="unit">mm</span></div>
-                <div className="hint">outer {fmt(result.outerDiameterMm, 2)} mm</div>
+                <div className="value">{fmtU(result.conductorDiameterMm, unitSystem, UNIT_LENGTH, 3)}<span className="unit">{unitLabel(unitSystem, UNIT_LENGTH)}</span></div>
+                <div className="hint">outer {fmtU(result.outerDiameterMm, unitSystem, UNIT_LENGTH, 3)} {unitLabel(unitSystem, UNIT_LENGTH)}</div>
               </div>
               <div className="result-tile">
                 <div className="label">Total thermal resistance</div>

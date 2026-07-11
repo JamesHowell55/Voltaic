@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import type { NutPreset, WasherPreset } from '../lib/fastenerHardware';
 import type { ClampedSectionInput, FrustumSegment, GeometryValidity, ThreadEngagementMode } from '../lib/boltedJointPhysics';
+import { toDisplay, unitLabel, UNIT_LENGTH, type UnitSystem } from '../lib/globalUnits';
 
 interface Props {
   nominalDiameterMm: number;
@@ -13,6 +14,13 @@ interface Props {
   geometryValidity: GeometryValidity | null;
   threadEngagementMode?: ThreadEngagementMode;
   engagementLengthMm?: number; // tapped or threadedInsert only
+  unitSystem: UnitSystem;
+}
+
+// Formats an mm value for the dimension labels, converting to the selected
+// display unit — the underlying SVG layout math always stays in mm regardless.
+function fmtDim(mm: number, unitSystem: UnitSystem): string {
+  return toDisplay(mm, unitSystem, UNIT_LENGTH).toFixed(unitSystem === 'imperial' ? 3 : 1);
 }
 
 const DRAW_W = 480;
@@ -31,6 +39,7 @@ export default function BoltedJointCrossSection({
   geometryValidity,
   threadEngagementMode,
   engagementLengthMm,
+  unitSystem,
 }: Props) {
   if (clampedSections.length === 0 || clampedSections.some((s) => s.thicknessMm <= 0 || s.outerDiameterMm <= 0)) {
     return (
@@ -306,10 +315,10 @@ export default function BoltedJointCrossSection({
           <line x1={MARGIN - 8} y1={s.y1} x2={MARGIN - 2} y2={s.y1} stroke="var(--border-strong)" strokeWidth={1} />
           <line x1={MARGIN - 8} y1={s.y0} x2={MARGIN - 8} y2={s.y1} stroke="var(--border-strong)" strokeWidth={1} />
           <text x={MARGIN - 12} y={(s.y0 + s.y1) / 2 - 2} textAnchor="end">
-            t={s.section.thicknessMm}
+            t={fmtDim(s.section.thicknessMm, unitSystem)}
           </text>
           <text x={MARGIN - 12} y={(s.y0 + s.y1) / 2 + 10} textAnchor="end" fill="var(--text-faint)">
-            ⌀{s.section.holeDiameterMm}
+            ⌀{fmtDim(s.section.holeDiameterMm, unitSystem)}
           </text>
         </g>
       ))}
@@ -318,7 +327,7 @@ export default function BoltedJointCrossSection({
       <g fontSize="10" fill="var(--text-2)" fontFamily="ui-monospace, monospace">
         <line x1={DRAW_W - MARGIN + 14} y1={stackTopY} x2={DRAW_W - MARGIN + 14} y2={stackBottomY} stroke="var(--border-hover)" strokeWidth={1} />
         <text x={DRAW_W - MARGIN + 20} y={(stackTopY + stackBottomY) / 2} textAnchor="start" transform={`rotate(90 ${DRAW_W - MARGIN + 20} ${(stackTopY + stackBottomY) / 2})`}>
-          grip {totalStackMm.toFixed(1)} mm
+          grip {fmtDim(totalStackMm, unitSystem)} {unitLabel(unitSystem, UNIT_LENGTH)}
         </text>
       </g>
 
@@ -328,13 +337,13 @@ export default function BoltedJointCrossSection({
         <g fontSize="10" fill="var(--accent)" fontFamily="ui-monospace, monospace">
           <line x1={20} y1={stackTopY} x2={20} y2={boltTipY} stroke="var(--accent)" strokeWidth={1} opacity={0.6} />
           <text x={16} y={(stackTopY + boltTipY) / 2} textAnchor="end" transform={`rotate(-90 16 ${(stackTopY + boltTipY) / 2})`}>
-            bolt length {((boltTipY - stackTopY) / scale).toFixed(1)} mm
+            bolt length {fmtDim((boltTipY - stackTopY) / scale, unitSystem)} {unitLabel(unitSystem, UNIT_LENGTH)}
           </text>
         </g>
       )}
 
       <text x={DRAW_W / 2} y={DRAW_H - 8} textAnchor="middle" fontSize="10" fill="var(--text-faint)" fontFamily="ui-monospace, monospace">
-        {clampedSections.length} clamped section{clampedSections.length > 1 ? 's' : ''} · {nut ? 'nut & bolt' : 'tapped/insert'} · dimensions in mm
+        {clampedSections.length} clamped section{clampedSections.length > 1 ? 's' : ''} · {nut ? 'nut & bolt' : 'tapped/insert'} · dimensions in {unitLabel(unitSystem, UNIT_LENGTH)}
       </text>
     </svg>
   );

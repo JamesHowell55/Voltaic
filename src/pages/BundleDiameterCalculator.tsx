@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
+import { useUnitSystem } from '../lib/UnitSystemContext';
+import { toDisplay, unitLabel, UNIT_LENGTH, UNIT_AREA } from '../lib/globalUnits';
 import { exportReportToPdf, type ReportSection, type CalcStepData } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
 import { useSavedCalculations } from '../lib/useSavedCalculations';
@@ -20,6 +22,10 @@ function fmt(n: number, digits = 2): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 }
 
+function fmtU(valueSI: number, unitSystem: ReturnType<typeof useUnitSystem>['unitSystem'], def: Parameters<typeof toDisplay>[2], digits = 2): string {
+  return fmt(toDisplay(valueSI, unitSystem, def), digits);
+}
+
 interface WireGroup {
   id: string;
   label: string;
@@ -33,6 +39,7 @@ let nextGroupId = 4;
 export default function BundleDiameterCalculator() {
   const { accentHex } = useTheme();
   const branding = useBranding();
+  const { unitSystem } = useUnitSystem();
 
   const [groups, setGroups] = useState<WireGroup[]>([
     { id: '1', label: 'Signal wires', count: 8, awg: 22, constructionId: 'm22759-32' },
@@ -165,7 +172,7 @@ export default function BundleDiameterCalculator() {
   const inputSections: ReportSection[] = useMemo(() => [
     {
       heading: 'Wire groups',
-      rows: groups.map((g) => ({ label: g.label, value: `${g.count}× ${getWireConstruction(g.constructionId).label} @ ${g.awg} AWG (⌀${fmt(wireOverallDiameterMm(getWireConstruction(g.constructionId), g.awg), 3)} mm each)` })),
+      rows: groups.map((g) => ({ label: g.label, value: `${g.count}× ${getWireConstruction(g.constructionId).label} @ ${g.awg} AWG (⌀${fmtU(wireOverallDiameterMm(getWireConstruction(g.constructionId), g.awg), unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)} each)` })),
     },
     {
       heading: 'Bundle coverings',
@@ -175,25 +182,25 @@ export default function BundleDiameterCalculator() {
         { label: 'Part marking', value: partMarking.label },
       ],
     },
-  ], [groups, overbraid, coveringFamily, partMarking]);
+  ], [groups, overbraid, coveringFamily, partMarking, unitSystem]);
 
   const outputSections: ReportSection[] = useMemo(() => [
     {
       heading: 'Bundle diameter',
       rows: [
-        { label: 'Bare bundle (packed)', value: `${fmt(packed.bundleDiameterMm, 3)} mm` },
-        { label: 'Bare bundle (Glenair cross-check)', value: `${fmt(glenair.bundleDiameterMm, 3)} mm` },
-        { label: 'Finished outer diameter', value: finishedOuterDiameterMm !== null ? `${fmt(finishedOuterDiameterMm, 3)} mm` : `${fmt(packed.bundleDiameterMm, 3)} mm (no covering)` },
+        { label: 'Bare bundle (packed)', value: `${fmtU(packed.bundleDiameterMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` },
+        { label: 'Bare bundle (Glenair cross-check)', value: `${fmtU(glenair.bundleDiameterMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` },
+        { label: 'Finished outer diameter', value: finishedOuterDiameterMm !== null ? `${fmtU(finishedOuterDiameterMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` : `${fmtU(packed.bundleDiameterMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)} (no covering)` },
       ],
     },
     {
       heading: 'Summary',
       rows: [
         { label: 'Total wire count', value: `${totalWireCount}` },
-        { label: 'Total copper cross-sectional area', value: `${fmt(totalCopperAreaMm2, 2)} mm²` },
+        { label: 'Total copper cross-sectional area', value: `${fmtU(totalCopperAreaMm2, unitSystem, UNIT_AREA, 3)} ${unitLabel(unitSystem, UNIT_AREA)}` },
       ],
     },
-  ], [packed, glenair, finishedOuterDiameterMm, totalWireCount, totalCopperAreaMm2]);
+  ], [packed, glenair, finishedOuterDiameterMm, totalWireCount, totalCopperAreaMm2, unitSystem]);
 
   const handleExportPdf = () => {
     exportReportToPdf({
@@ -254,7 +261,7 @@ export default function BundleDiameterCalculator() {
                   </div>
                   <div className="field">
                     <label>OD</label>
-                    <div className="hint" style={{ marginTop: '0.6rem' }}>⌀{fmt(wireOverallDiameterMm(getWireConstruction(g.constructionId), g.awg), 3)} mm</div>
+                    <div className="hint" style={{ marginTop: '0.6rem' }}>⌀{fmtU(wireOverallDiameterMm(getWireConstruction(g.constructionId), g.awg), unitSystem, UNIT_LENGTH, 3)} {unitLabel(unitSystem, UNIT_LENGTH)}</div>
                   </div>
                   <div className="field" style={{ gridColumn: '1 / -1' }}>
                     <label>
@@ -328,12 +335,12 @@ export default function BundleDiameterCalculator() {
             <div className="result-grid">
               <div className="result-tile">
                 <div className="label">Bare bundle diameter</div>
-                <div className="value">{fmt(packed.bundleDiameterMm, 2)}<span className="unit">mm</span></div>
-                <div className="hint">Glenair cross-check: {fmt(glenair.bundleDiameterMm, 2)} mm</div>
+                <div className="value">{fmtU(packed.bundleDiameterMm, unitSystem, UNIT_LENGTH, 3)}<span className="unit">{unitLabel(unitSystem, UNIT_LENGTH)}</span></div>
+                <div className="hint">Glenair cross-check: {fmtU(glenair.bundleDiameterMm, unitSystem, UNIT_LENGTH, 3)} {unitLabel(unitSystem, UNIT_LENGTH)}</div>
               </div>
               <div className="result-tile">
                 <div className="label">Finished outer diameter</div>
-                <div className="value">{fmt(finishedOuterDiameterMm ?? packed.bundleDiameterMm, 2)}<span className="unit">mm</span></div>
+                <div className="value">{fmtU(finishedOuterDiameterMm ?? packed.bundleDiameterMm, unitSystem, UNIT_LENGTH, 3)}<span className="unit">{unitLabel(unitSystem, UNIT_LENGTH)}</span></div>
                 <div className="hint">{selectedCoveringSize?.label ?? 'no covering'}</div>
               </div>
               <div className="result-tile">
@@ -342,7 +349,7 @@ export default function BundleDiameterCalculator() {
               </div>
               <div className="result-tile">
                 <div className="label">Total copper area</div>
-                <div className="value">{fmt(totalCopperAreaMm2, 2)}<span className="unit">mm²</span></div>
+                <div className="value">{fmtU(totalCopperAreaMm2, unitSystem, UNIT_AREA, 3)}<span className="unit">{unitLabel(unitSystem, UNIT_AREA)}</span></div>
               </div>
             </div>
           </div>

@@ -5,6 +5,8 @@ import ConductionStackCrossSection from '../components/ConductionStackCrossSecti
 import TimeSeriesChart from '../components/TimeSeriesChart';
 import SavedCalculations from '../components/SavedCalculations';
 import { useTheme } from '../lib/ThemeContext';
+import { useUnitSystem } from '../lib/UnitSystemContext';
+import { toDisplay, fromDisplay, unitLabel, UNIT_LENGTH, UNIT_LENGTH_M, UNIT_AREA, UNIT_TEMP, UNIT_TEMP_DELTA } from '../lib/globalUnits';
 import { deriveAccentOnLight } from '../lib/theme';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData, type ReportDiagram } from '../lib/pdfExport';
 import { renderLengthProfileSvg, renderCrossSectionSvg, renderConductionStackSvg, renderTimeSeriesChartSvg } from '../lib/pdfDiagrams';
@@ -53,9 +55,14 @@ function fmt(n: number, digits = 2): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 }
 
+function fmtU(valueSI: number, unitSystem: ReturnType<typeof useUnitSystem>['unitSystem'], def: Parameters<typeof toDisplay>[2], digits = 2): string {
+  return fmt(toDisplay(valueSI, unitSystem, def), digits);
+}
+
 export default function BusbarCalculator() {
   const { accentHex } = useTheme();
   const branding = useBranding();
+  const { unitSystem } = useUnitSystem();
   const { isPremium, loading: entitlementLoading } = useEntitlement();
   const FREE_SECTION_LIMIT = 2;
   const [busbarType, setBusbarType] = useState<BusbarType>('single');
@@ -404,13 +411,13 @@ export default function BusbarCalculator() {
   const inputSections: ReportSection[] = useMemo(() => {
     const geoRows: ReportRow[] = [{ label: 'Busbar type', value: busbarType === 'single' ? 'Single (sections)' : 'Multiple (stacked bars)' }];
     if (busbarType === 'single') {
-      sections.forEach((s, i) => geoRows.push({ label: `Section ${i + 1}`, value: `${s.width} × ${s.length} mm` }));
-      geoRows.push({ label: 'Common thickness', value: `${thicknessMm} mm` });
+      sections.forEach((s, i) => geoRows.push({ label: `Section ${i + 1}`, value: `${fmtU(s.width, unitSystem, UNIT_LENGTH, 3)} × ${fmtU(s.length, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` }));
+      geoRows.push({ label: 'Common thickness', value: `${fmtU(thicknessMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` });
     } else {
-      geoRows.push({ label: 'Bar profile', value: `${profileWidth} × ${profileThickness} mm` });
+      geoRows.push({ label: 'Bar profile', value: `${fmtU(profileWidth, unitSystem, UNIT_LENGTH, 3)} × ${fmtU(profileThickness, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` });
       geoRows.push({ label: 'Number of bars', value: `${nBars}` });
-      geoRows.push({ label: 'Gap between bars', value: `${barGap} mm` });
-      geoRows.push({ label: 'Bar length', value: `${bundleLengthM} m` });
+      geoRows.push({ label: 'Gap between bars', value: `${fmtU(barGap, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` });
+      geoRows.push({ label: 'Bar length', value: `${fmtU(bundleLengthM, unitSystem, UNIT_LENGTH_M, 3)} ${unitLabel(unitSystem, UNIT_LENGTH_M)}` });
     }
     geoRows.push({ label: 'Mounting orientation', value: orientation === 'vertical' ? 'Vertical (edge)' : 'Horizontal (flat)' });
 
@@ -418,23 +425,23 @@ export default function BusbarCalculator() {
       { label: 'Material', value: material.name },
       { label: 'Emissivity', value: `${emissivity}` },
       { label: 'Convection', value: convMode === 'auto' ? 'Auto-calculated' : `Manual ${manualHValue} W/(m²K)` },
-      { label: 'Coating', value: coatingThicknessMm > 0 ? `${coatingThicknessMm} mm, k=${coatingConductivity} W/(m·K)` : 'None (bare)' },
+      { label: 'Coating', value: coatingThicknessMm > 0 ? `${fmtU(coatingThicknessMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}, k=${coatingConductivity} W/(m·K)` : 'None (bare)' },
     ];
 
     const elecRows: ReportRow[] = [{ label: 'Current type', value: currentType.toUpperCase() }];
     if (durationMode !== 'profile') elecRows.push({ label: 'Current', value: `${fmt(current, 0)} A rms` });
     if (currentType === 'ac') elecRows.push({ label: 'Frequency', value: `${frequency} Hz` });
-    elecRows.push({ label: 'Ambient temperature', value: `${ambientC} °C` });
+    elecRows.push({ label: 'Ambient temperature', value: `${fmtU(ambientC, unitSystem, UNIT_TEMP, 1)} ${unitLabel(unitSystem, UNIT_TEMP)}` });
     elecRows.push({ label: 'Duration mode', value: durationMode === 'continuous' ? 'Continuous' : durationMode === 'fault' ? 'Short-time / fault' : 'Load profile' });
-    if (durationMode === 'continuous') elecRows.push({ label: 'Max allowable temp', value: `${maxContinuousTempC} °C` });
+    if (durationMode === 'continuous') elecRows.push({ label: 'Max allowable temp', value: `${fmtU(maxContinuousTempC, unitSystem, UNIT_TEMP, 1)} ${unitLabel(unitSystem, UNIT_TEMP)}` });
     if (durationMode === 'fault') {
       elecRows.push({ label: 'Fault duration', value: `${faultDurationS} s` });
-      elecRows.push({ label: 'Initial temp', value: `${faultInitialTempC} °C` });
-      elecRows.push({ label: 'Max short-time temp', value: `${maxFaultTempC} °C` });
+      elecRows.push({ label: 'Initial temp', value: `${fmtU(faultInitialTempC, unitSystem, UNIT_TEMP, 1)} ${unitLabel(unitSystem, UNIT_TEMP)}` });
+      elecRows.push({ label: 'Max short-time temp', value: `${fmtU(maxFaultTempC, unitSystem, UNIT_TEMP, 1)} ${unitLabel(unitSystem, UNIT_TEMP)}` });
     }
     if (durationMode === 'profile') {
       steps.forEach((s, i) => elecRows.push({ label: `Step ${i + 1}`, value: `${s.current} A for ${s.durationS} s` }));
-      elecRows.push({ label: 'Max allowable temp', value: `${maxContinuousTempC} °C` });
+      elecRows.push({ label: 'Max allowable temp', value: `${fmtU(maxContinuousTempC, unitSystem, UNIT_TEMP, 1)} ${unitLabel(unitSystem, UNIT_TEMP)}` });
     }
 
     const sectionsOut: ReportSection[] = [
@@ -449,33 +456,33 @@ export default function BusbarCalculator() {
         heading: 'Conduction cooling',
         rows: [
           { label: 'Sections with conduction applied', value: sections.map((s, i) => (s.coolingEnabled ? `${i + 1}` : null)).filter(Boolean).join(', ') || 'None' },
-          { label: 'Thermal interface material', value: `${timThicknessMm} mm, k=${timConductivity} W/(m·K)` },
-          { label: 'Metallic section', value: `${metalMaterialId}, ${metalThicknessMm} mm, k=${fmt(metalConductivity, 0)} W/(m·K)` },
+          { label: 'Thermal interface material', value: `${fmtU(timThicknessMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}, k=${timConductivity} W/(m·K)` },
+          { label: 'Metallic section', value: `${metalMaterialId}, ${fmtU(metalThicknessMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}, k=${fmt(metalConductivity, 0)} W/(m·K)` },
           { label: 'Coolant medium', value: `${coolantLabel} (c=${fmt(coolantSpecificHeat, 0)} J/(kg·K), ρ=${fmt(coolantDensity, 0)} kg/m³)` },
           { label: 'Flow rate', value: `${coolantFlowRateLPerMin} L/min` },
-          { label: 'Coolant inlet temperature', value: `${coolantInletTempC} °C` },
+          { label: 'Coolant inlet temperature', value: `${fmtU(coolantInletTempC, unitSystem, UNIT_TEMP, 1)} ${unitLabel(unitSystem, UNIT_TEMP)}` },
         ],
       });
     }
 
     return sectionsOut;
-  }, [busbarType, sections, thicknessMm, profileWidth, profileThickness, nBars, barGap, bundleLengthM, orientation, material, emissivity, convMode, manualHValue, coatingThicknessMm, coatingConductivity, currentType, durationMode, current, frequency, ambientC, maxContinuousTempC, faultDurationS, faultInitialTempC, maxFaultTempC, steps, anySectionCooled, timThicknessMm, timConductivity, metalMaterialId, metalThicknessMm, metalConductivity, coolantPresetId, coolantSpecificHeat, coolantDensity, coolantFlowRateLPerMin, coolantInletTempC]);
+  }, [busbarType, sections, thicknessMm, profileWidth, profileThickness, nBars, barGap, bundleLengthM, orientation, material, emissivity, convMode, manualHValue, coatingThicknessMm, coatingConductivity, currentType, durationMode, current, frequency, ambientC, maxContinuousTempC, faultDurationS, faultInitialTempC, maxFaultTempC, steps, anySectionCooled, timThicknessMm, timConductivity, metalMaterialId, metalThicknessMm, metalConductivity, coolantPresetId, coolantSpecificHeat, coolantDensity, coolantFlowRateLPerMin, coolantInletTempC, unitSystem]);
 
   const outputSections: ReportSection[] = useMemo(() => {
     const headline: ReportRow[] = [
-      { label: durationMode === 'continuous' ? 'Peak steady-state temp' : durationMode === 'fault' ? 'Peak temp (fault)' : 'Peak temp (profile)', value: worstTempC !== undefined ? `${fmt(worstTempC, 1)} °C` : '—' },
-      { label: 'Temperature rise', value: worstTempC !== undefined ? `${fmt(worstTempC - referenceTempC, 1)} K` : '—' },
+      { label: durationMode === 'continuous' ? 'Peak steady-state temp' : durationMode === 'fault' ? 'Peak temp (fault)' : 'Peak temp (profile)', value: worstTempC !== undefined ? `${fmtU(worstTempC, unitSystem, UNIT_TEMP, 1)} ${unitLabel(unitSystem, UNIT_TEMP)}` : '—' },
+      { label: 'Temperature rise', value: worstTempC !== undefined ? `${fmtU(worstTempC - referenceTempC, unitSystem, UNIT_TEMP_DELTA, 1)} ${unitSystem === 'imperial' ? '°F' : 'K'}` : '—' },
     ];
     if (durationMode === 'continuous') headline.push({ label: 'Max continuous current', value: maxCurrent !== null ? `${fmt(maxCurrent, 0)} A` : '—' });
-    if (durationMode === 'fault') headline.push({ label: 'Min area for this fault', value: minArea !== null ? `${fmt(minArea, 0)} mm²` : '—' });
+    if (durationMode === 'fault') headline.push({ label: 'Min area for this fault', value: minArea !== null ? `${fmtU(minArea, unitSystem, UNIT_AREA, 3)} ${unitLabel(unitSystem, UNIT_AREA)}` : '—' });
     if (durationMode === 'profile' && transient) headline.push({ label: 'Profile duration', value: `${fmt(transient.timeS[transient.timeS.length - 1], 0)} s` });
     headline.push({ label: 'Total busbar loss', value: durationMode === 'continuous' ? (totalLossW !== undefined ? `${fmt(totalLossW, 1)} W` : '—') : (totalEnergyJ !== undefined ? `${fmt(totalEnergyJ / 1000, 2)} kJ` : '—') });
     if (currentType === 'ac' && skinDepthAtTempMm !== null) {
-      headline.push({ label: 'Skin depth', value: `${isFinite(skinDepthAtTempMm) ? fmt(skinDepthAtTempMm, 2) : '—'} mm (at ${fmt(skinDepthTempC, 0)}°C, ${fmt(frequency, 0)} Hz)` });
+      headline.push({ label: 'Skin depth', value: `${isFinite(skinDepthAtTempMm) ? fmtU(skinDepthAtTempMm, unitSystem, UNIT_LENGTH, 4) : '—'} ${unitLabel(unitSystem, UNIT_LENGTH)} (at ${fmtU(skinDepthTempC, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)}, ${fmt(frequency, 0)} Hz)` });
     }
     if (anySectionCooled && durationMode === 'continuous') {
       headline.push({ label: 'Heat rejected via conduction cooling', value: `${fmt(coolantTotalHeatW, 1)} W` });
-      headline.push({ label: 'Est. coolant temperature rise', value: `${fmt(coolantTempRiseK, 2)} K (informational, not fed back into the result)` });
+      headline.push({ label: 'Est. coolant temperature rise', value: `${fmtU(coolantTempRiseK, unitSystem, UNIT_TEMP_DELTA, 2)} ${unitSystem === 'imperial' ? '°F' : 'K'} (informational, not fed back into the result)` });
     }
 
     const nodeRows: ReportRow[] = nodes.map((node, i) => {
@@ -483,14 +490,14 @@ export default function BusbarCalculator() {
         : durationMode === 'fault' ? adiabatic?.finalTempsC[i]
           : transient?.peakTempsC[i];
       const coolantW = durationMode === 'continuous' && anySectionCooled ? steady?.coolantLossPerNodeW[i] : undefined;
-      return { label: node.label, value: `${fmt(node.areaMm2, 1)} mm², ${tempC !== undefined ? fmt(tempC, 1) : '—'} °C${coolantW !== undefined ? `, coolant ${fmt(coolantW, 1)} W` : ''}` };
+      return { label: node.label, value: `${fmtU(node.areaMm2, unitSystem, UNIT_AREA, 3)} ${unitLabel(unitSystem, UNIT_AREA)}, ${tempC !== undefined ? fmtU(tempC, unitSystem, UNIT_TEMP, 1) : '—'} ${unitLabel(unitSystem, UNIT_TEMP)}${coolantW !== undefined ? `, coolant ${fmt(coolantW, 1)} W` : ''}` };
     });
 
     return [
       { heading: 'Summary', rows: headline },
       { heading: busbarType === 'single' ? 'Per-section results' : 'Bundle result', rows: nodeRows },
     ];
-  }, [durationMode, worstTempC, referenceTempC, maxCurrent, minArea, transient, totalLossW, totalEnergyJ, nodes, steady, adiabatic, busbarType, anySectionCooled, coolantTotalHeatW, coolantTempRiseK, currentType, skinDepthAtTempMm, skinDepthTempC, frequency]);
+  }, [durationMode, worstTempC, referenceTempC, maxCurrent, minArea, transient, totalLossW, totalEnergyJ, nodes, steady, adiabatic, busbarType, anySectionCooled, coolantTotalHeatW, coolantTempRiseK, currentType, skinDepthAtTempMm, skinDepthTempC, frequency, unitSystem]);
 
   const handleExportPdf = () => {
     const pdfAccent = deriveAccentOnLight(accentHex);
@@ -610,12 +617,12 @@ export default function BusbarCalculator() {
                   <div className="step-row" key={s.id}>
                     <div className="bar-index">{i + 1}</div>
                     <div className="field">
-                      <label>Width (mm)</label>
-                      <input autoComplete="off" type="number" min={1} value={s.width} onChange={e => updateSection(s.id, { width: Number(e.target.value) })} />
+                      <label>Width ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                      <input autoComplete="off" type="number" min={0.001} value={toDisplay(s.width, unitSystem, UNIT_LENGTH)} onChange={e => updateSection(s.id, { width: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                     </div>
                     <div className="field">
-                      <label>Length (mm)</label>
-                      <input autoComplete="off" type="number" min={1} value={s.length} onChange={e => updateSection(s.id, { length: Number(e.target.value) })} />
+                      <label>Length ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                      <input autoComplete="off" type="number" min={0.001} value={toDisplay(s.length, unitSystem, UNIT_LENGTH)} onChange={e => updateSection(s.id, { length: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', alignItems: 'flex-end' }}>
                       <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.72rem', color: 'var(--text-2)', fontWeight: 400, whiteSpace: 'nowrap' }}>
@@ -627,8 +634,8 @@ export default function BusbarCalculator() {
                   </div>
                 ))}
                 <div className="field" style={{ marginTop: '0.6rem' }}>
-                  <label>Common thickness (mm)</label>
-                  <input autoComplete="off" type="number" min={0.5} value={thicknessMm} onChange={e => setThicknessMm(Number(e.target.value))} style={{ maxWidth: 160 }} />
+                  <label>Common thickness ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0.001} value={toDisplay(thicknessMm, unitSystem, UNIT_LENGTH)} onChange={e => setThicknessMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} style={{ maxWidth: 160 }} />
                 </div>
                 <div style={{ marginTop: '1rem' }}>
                   <BusbarLengthProfile sections={sections} />
@@ -638,28 +645,28 @@ export default function BusbarCalculator() {
               <>
                 <div className="grid grid-2">
                   <div className="field">
-                    <label>Bar width (mm)</label>
-                    <input autoComplete="off" type="number" min={1} value={profileWidth} onChange={e => setProfileWidth(Number(e.target.value))} />
+                    <label>Bar width ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                    <input autoComplete="off" type="number" min={0.001} value={toDisplay(profileWidth, unitSystem, UNIT_LENGTH)} onChange={e => setProfileWidth(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
                   </div>
                   <div className="field">
-                    <label>Bar thickness (mm)</label>
-                    <input autoComplete="off" type="number" min={0.5} value={profileThickness} onChange={e => setProfileThickness(Number(e.target.value))} />
+                    <label>Bar thickness ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                    <input autoComplete="off" type="number" min={0.001} value={toDisplay(profileThickness, unitSystem, UNIT_LENGTH)} onChange={e => setProfileThickness(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
                   </div>
                   <div className="field">
                     <label>Number of bars</label>
                     <input autoComplete="off" type="number" min={1} max={20} value={nBars} onChange={e => setNBars(Number(e.target.value))} />
                   </div>
                   <div className="field">
-                    <label>Gap between bars (mm)</label>
-                    <input autoComplete="off" type="number" min={0} value={barGap} onChange={e => setBarGap(Number(e.target.value))} />
+                    <label>Gap between bars ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                    <input autoComplete="off" type="number" min={0} value={toDisplay(barGap, unitSystem, UNIT_LENGTH)} onChange={e => setBarGap(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
                   </div>
                   <div className="field">
-                    <label>Bar length (m) <span className="hint">— for total loss</span></label>
-                    <input autoComplete="off" type="number" min={0.01} value={bundleLengthM} onChange={e => setBundleLengthM(Number(e.target.value))} />
+                    <label>Bar length ({unitLabel(unitSystem, UNIT_LENGTH_M)}) <span className="hint">— for total loss</span></label>
+                    <input autoComplete="off" type="number" min={0.001} value={toDisplay(bundleLengthM, unitSystem, UNIT_LENGTH_M)} onChange={e => setBundleLengthM(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH_M))} />
                   </div>
                   <div className="field">
                     <label>Total cross-section area</label>
-                    <input value={`${fmt(nodes[0]?.areaMm2 ?? 0, 1)} mm²`} readOnly />
+                    <input value={`${fmtU(nodes[0]?.areaMm2 ?? 0, unitSystem, UNIT_AREA, 3)} ${unitLabel(unitSystem, UNIT_AREA)}`} readOnly />
                   </div>
                 </div>
                 <div style={{ marginTop: '1rem' }}>
@@ -725,8 +732,8 @@ export default function BusbarCalculator() {
                 </select>
               </div>
               <div className="field">
-                <label>Coating thickness (mm)</label>
-                <input autoComplete="off" type="number" min={0} step={0.01} value={coatingThicknessMm} onChange={e => setCoatingThicknessMm(Number(e.target.value))} />
+                <label>Coating thickness ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                <input autoComplete="off" type="number" min={0} step={0.001} value={toDisplay(coatingThicknessMm, unitSystem, UNIT_LENGTH)} onChange={e => setCoatingThicknessMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
               </div>
               <div className="field">
                 <label>Coating thermal conductivity (W/m·K)</label>
@@ -795,8 +802,8 @@ export default function BusbarCalculator() {
                 </div>
               )}
               <div className="field">
-                <label>Ambient temperature (°C)</label>
-                <input autoComplete="off" type="number" value={ambientC} onChange={e => setAmbientC(Number(e.target.value))} />
+                <label>Ambient temperature ({unitLabel(unitSystem, UNIT_TEMP)})</label>
+                <input autoComplete="off" type="number" value={toDisplay(ambientC, unitSystem, UNIT_TEMP)} onChange={e => setAmbientC(fromDisplay(Number(e.target.value), unitSystem, UNIT_TEMP))} />
               </div>
               <div className="field">
                 <label>Duration mode</label>
@@ -813,8 +820,8 @@ export default function BusbarCalculator() {
             {durationMode === 'continuous' && (
               <div className="grid grid-2" style={{ marginTop: '0.85rem' }}>
                 <div className="field">
-                  <label>Max allowable temperature (°C)</label>
-                  <input autoComplete="off" type="number" value={maxContinuousTempC} onChange={e => setMaxContinuousTempC(Number(e.target.value))} />
+                  <label>Max allowable temperature ({unitLabel(unitSystem, UNIT_TEMP)})</label>
+                  <input autoComplete="off" type="number" value={toDisplay(maxContinuousTempC, unitSystem, UNIT_TEMP)} onChange={e => setMaxContinuousTempC(fromDisplay(Number(e.target.value), unitSystem, UNIT_TEMP))} />
                   <span className="hint">IEC 61439-1 default: 35°C ambient + 70K rise = 105°C for bare bars.</span>
                 </div>
               </div>
@@ -828,12 +835,12 @@ export default function BusbarCalculator() {
                   <span className="hint">Adiabatic assumption is valid up to a few seconds.</span>
                 </div>
                 <div className="field">
-                  <label>Initial (pre-fault) temperature (°C)</label>
-                  <input autoComplete="off" type="number" value={faultInitialTempC} onChange={e => setFaultInitialTempC(Number(e.target.value))} />
+                  <label>Initial (pre-fault) temperature ({unitLabel(unitSystem, UNIT_TEMP)})</label>
+                  <input autoComplete="off" type="number" value={toDisplay(faultInitialTempC, unitSystem, UNIT_TEMP)} onChange={e => setFaultInitialTempC(fromDisplay(Number(e.target.value), unitSystem, UNIT_TEMP))} />
                 </div>
                 <div className="field">
-                  <label>Max short-time temperature (°C)</label>
-                  <input autoComplete="off" type="number" value={maxFaultTempC} onChange={e => setMaxFaultTempC(Number(e.target.value))} />
+                  <label>Max short-time temperature ({unitLabel(unitSystem, UNIT_TEMP)})</label>
+                  <input autoComplete="off" type="number" value={toDisplay(maxFaultTempC, unitSystem, UNIT_TEMP)} onChange={e => setMaxFaultTempC(fromDisplay(Number(e.target.value), unitSystem, UNIT_TEMP))} />
                   <span className="hint">Bare-conductor limit: 250°C copper / 200°C aluminium (typical).</span>
                 </div>
               </div>
@@ -887,8 +894,8 @@ export default function BusbarCalculator() {
                 </div>
                 <div />
                 <div className="field">
-                  <label>TIM thickness (mm)</label>
-                  <input autoComplete="off" type="number" min={0.01} step={0.01} value={timThicknessMm} onChange={e => setTimThicknessMm(Number(e.target.value))} />
+                  <label>TIM thickness ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0.001} step={0.001} value={toDisplay(timThicknessMm, unitSystem, UNIT_LENGTH)} onChange={e => setTimThicknessMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
                 </div>
                 <div className="field">
                   <label>TIM thermal conductivity (W/m·K)</label>
@@ -903,8 +910,8 @@ export default function BusbarCalculator() {
                   </div>
                 </div>
                 <div className="field">
-                  <label>Metallic section thickness (mm)</label>
-                  <input autoComplete="off" type="number" min={0.1} value={metalThicknessMm} onChange={e => setMetalThicknessMm(Number(e.target.value))} />
+                  <label>Metallic section thickness ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0.001} value={toDisplay(metalThicknessMm, unitSystem, UNIT_LENGTH)} onChange={e => setMetalThicknessMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
                 </div>
                 {metalMaterialId === 'custom' && (
                   <div className="field" style={{ gridColumn: '1 / -1' }}>
@@ -924,8 +931,8 @@ export default function BusbarCalculator() {
                   <input autoComplete="off" type="number" min={0} step={0.1} value={coolantFlowRateLPerMin} onChange={e => setCoolantFlowRateLPerMin(Number(e.target.value))} />
                 </div>
                 <div className="field" style={{ gridColumn: '1 / -1' }}>
-                  <label>Coolant inlet temperature (°C)</label>
-                  <input autoComplete="off" type="number" value={coolantInletTempC} onChange={e => setCoolantInletTempC(Number(e.target.value))} />
+                  <label>Coolant inlet temperature ({unitLabel(unitSystem, UNIT_TEMP)})</label>
+                  <input autoComplete="off" type="number" value={toDisplay(coolantInletTempC, unitSystem, UNIT_TEMP)} onChange={e => setCoolantInletTempC(fromDisplay(Number(e.target.value), unitSystem, UNIT_TEMP))} />
                   <span className="hint">Used as the fixed sink temperature for the conduction path — the metallic section's outer face is taken to be directly at this temperature (no separate coolant-film resistance term).</span>
                 </div>
                 {coolantPresetId === 'custom' && (
@@ -983,14 +990,14 @@ export default function BusbarCalculator() {
               <div className="result-tile">
                 <div className="label">{durationMode === 'continuous' ? 'Peak steady-state temp' : durationMode === 'fault' ? 'Peak temp (fault)' : 'Peak temp (profile)'}</div>
                 <div className={`value ${passes === false ? 'neg' : passes === true ? 'pos' : ''}`}>
-                  {worstTempC !== undefined ? fmt(worstTempC, 1) : '—'}<span className="unit">°C</span>
+                  {worstTempC !== undefined ? fmtU(worstTempC, unitSystem, UNIT_TEMP, 1) : '—'}<span className="unit">{unitLabel(unitSystem, UNIT_TEMP)}</span>
                 </div>
               </div>
               <div className="result-tile">
                 <div className="label">Temperature rise</div>
                 <div className="value">
-                  {worstTempC !== undefined ? fmt(worstTempC - referenceTempC, 1) : '—'}
-                  <span className="unit">K</span>
+                  {worstTempC !== undefined ? fmtU(worstTempC - referenceTempC, unitSystem, UNIT_TEMP_DELTA, 1) : '—'}
+                  <span className="unit">{unitSystem === 'imperial' ? '°F' : 'K'}</span>
                 </div>
               </div>
               {durationMode === 'continuous' && (
@@ -1002,7 +1009,7 @@ export default function BusbarCalculator() {
               {durationMode === 'fault' && (
                 <div className="result-tile">
                   <div className="label">Min. area for this fault</div>
-                  <div className="value">{minArea !== null ? fmt(minArea, 0) : '—'}<span className="unit">mm²</span></div>
+                  <div className="value">{minArea !== null ? fmtU(minArea, unitSystem, UNIT_AREA, 3) : '—'}<span className="unit">{unitLabel(unitSystem, UNIT_AREA)}</span></div>
                 </div>
               )}
               {durationMode === 'profile' && transient && (
@@ -1026,8 +1033,8 @@ export default function BusbarCalculator() {
               {currentType === 'ac' && skinDepthAtTempMm !== null && (
                 <div className="result-tile">
                   <div className="label">Skin depth</div>
-                  <div className="value">{isFinite(skinDepthAtTempMm) ? fmt(skinDepthAtTempMm, 2) : '—'}<span className="unit">mm</span></div>
-                  <div className="hint">at {fmt(skinDepthTempC, 0)}°C, {fmt(frequency, 0)} Hz</div>
+                  <div className="value">{isFinite(skinDepthAtTempMm) ? fmtU(skinDepthAtTempMm, unitSystem, UNIT_LENGTH, 4) : '—'}<span className="unit">{unitLabel(unitSystem, UNIT_LENGTH)}</span></div>
+                  <div className="hint">at {fmtU(skinDepthTempC, unitSystem, UNIT_TEMP, 0)}{unitLabel(unitSystem, UNIT_TEMP)}, {fmt(frequency, 0)} Hz</div>
                 </div>
               )}
             </div>
@@ -1037,12 +1044,12 @@ export default function BusbarCalculator() {
               <thead>
                 <tr>
                   <th>{busbarType === 'single' ? 'Section' : 'Bundle'}</th>
-                  <th>Area (mm²)</th>
+                  <th>Area ({unitLabel(unitSystem, UNIT_AREA)})</th>
                   {durationMode !== 'profile' && <th>Current density (A/mm²)</th>}
                   {durationMode === 'continuous' && steady && <th>Rac (<span style={{ textTransform: 'none' }}>µΩ</span>)</th>}
                   <th>Loss {durationMode === 'continuous' ? '(W)' : '(kJ)'}</th>
                   {durationMode === 'continuous' && steady && anySectionCooled && <th>Coolant (W)</th>}
-                  <th>{durationMode === 'profile' ? 'Peak temp (°C)' : durationMode === 'fault' ? 'Final temp (°C)' : 'Temp (°C)'}</th>
+                  <th>{durationMode === 'profile' ? `Peak temp (${unitLabel(unitSystem, UNIT_TEMP)})` : durationMode === 'fault' ? `Final temp (${unitLabel(unitSystem, UNIT_TEMP)})` : `Temp (${unitLabel(unitSystem, UNIT_TEMP)})`}</th>
                   {durationMode === 'fault' && <th>Pass</th>}
                 </tr>
               </thead>
@@ -1056,12 +1063,12 @@ export default function BusbarCalculator() {
                   return (
                     <tr key={node.id}>
                       <td>{node.label}</td>
-                      <td>{fmt(node.areaMm2, 1)}</td>
+                      <td>{fmtU(node.areaMm2, unitSystem, UNIT_AREA, 3)}</td>
                       {durationMode !== 'profile' && <td>{fmt(current / node.areaMm2, 2)}</td>}
                       {durationMode === 'continuous' && steady && <td>{fmt(steady.racTotalPerNode[i] * 1e6, 1)}</td>}
                       <td>{lossDisplay !== undefined ? fmt(lossDisplay, durationMode === 'continuous' ? 1 : 2) : '—'}</td>
                       {durationMode === 'continuous' && steady && anySectionCooled && <td>{fmt(steady.coolantLossPerNodeW[i], 1)}</td>}
-                      <td>{tempC !== undefined ? fmt(tempC, 1) : '—'}</td>
+                      <td>{tempC !== undefined ? fmtU(tempC, unitSystem, UNIT_TEMP, 1) : '—'}</td>
                       {durationMode === 'fault' && <td className={nodePass ? 'pass' : 'fail'}>{nodePass ? '✓' : '✗'}</td>}
                     </tr>
                   );
@@ -1069,7 +1076,7 @@ export default function BusbarCalculator() {
                 {nodes.length > 1 && (
                   <tr>
                     <td><b>Total</b></td>
-                    <td>{fmt(nodes.reduce((s, n) => s + n.areaMm2, 0), 1)}</td>
+                    <td>{fmtU(nodes.reduce((s, n) => s + n.areaMm2, 0), unitSystem, UNIT_AREA, 3)}</td>
                     {durationMode !== 'profile' && <td>—</td>}
                     {durationMode === 'continuous' && steady && <td>—</td>}
                     <td><b>{durationMode === 'continuous' ? (totalLossW !== undefined ? fmt(totalLossW, 1) : '—') : (totalEnergyJ !== undefined ? fmt(totalEnergyJ / 1000, 2) : '—')}</b></td>

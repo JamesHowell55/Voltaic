@@ -19,6 +19,7 @@ import AccountPage from './pages/AccountPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
 import { ThemeProvider } from './lib/ThemeContext';
 import { AuthProvider } from './lib/AuthContext';
+import { UnitSystemProvider } from './lib/UnitSystemContext';
 import { NAV_CATEGORIES } from './lib/navCategories';
 
 const placeholderLinks = NAV_CATEGORIES.flatMap((c) => c.links).filter((l) => !l.available);
@@ -38,32 +39,34 @@ function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <div className="app-shell">
-          <NavBar />
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/busbar" element={<BusbarCalculator />} />
-            <Route path="/creepage-clearance" element={<CreepageClearanceCalculator />} />
-            <Route path="/bolted-joint" element={<BoltedJointCalculator />} />
-            <Route path="/cable-sizing" element={<CableWireSizingCalculator />} />
-            <Route path="/battery-pack-series-parallel" element={<BatteryPackSeriesParallelCalculator />} />
-            <Route path="/speed-torque-power" element={<MotorTorquePowerSpeedCalculator />} />
-            <Route path="/choke-sizing" element={<ChokeSizingCalculator />} />
-            <Route path="/mosfet-loss" element={<MosfetLossCalculator />} />
-            <Route path="/harness-bundle-diameter" element={<BundleDiameterCalculator />} />
-            <Route path="/harness-designer" element={<HarnessDesigner />} />
-            <Route path="/skin-depth" element={<SkinDepthCalculator />} />
-            <Route path="/conversions" element={<ConversionsCalculator />} />
-            <Route path="/account" element={<AccountPage />} />
-            <Route path="/reset-password" element={<ResetPasswordPage />} />
-            {placeholderLinks.map((link) => (
-              <Route key={link.path} path={link.path} element={<ComingSoonCalculator />} />
-            ))}
-          </Routes>
-          <footer className="site-footer">
-            Engineering estimation tool — verify critical designs against the referenced standards and, where required, physical testing.
-          </footer>
-        </div>
+        <UnitSystemProvider>
+          <div className="app-shell">
+            <NavBar />
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/busbar" element={<BusbarCalculator />} />
+              <Route path="/creepage-clearance" element={<CreepageClearanceCalculator />} />
+              <Route path="/bolted-joint" element={<BoltedJointCalculator />} />
+              <Route path="/cable-sizing" element={<CableWireSizingCalculator />} />
+              <Route path="/battery-pack-series-parallel" element={<BatteryPackSeriesParallelCalculator />} />
+              <Route path="/speed-torque-power" element={<MotorTorquePowerSpeedCalculator />} />
+              <Route path="/choke-sizing" element={<ChokeSizingCalculator />} />
+              <Route path="/mosfet-loss" element={<MosfetLossCalculator />} />
+              <Route path="/harness-bundle-diameter" element={<BundleDiameterCalculator />} />
+              <Route path="/harness-designer" element={<HarnessDesigner />} />
+              <Route path="/skin-depth" element={<SkinDepthCalculator />} />
+              <Route path="/conversions" element={<ConversionsCalculator />} />
+              <Route path="/account" element={<AccountPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
+              {placeholderLinks.map((link) => (
+                <Route key={link.path} path={link.path} element={<ComingSoonCalculator />} />
+              ))}
+            </Routes>
+            <footer className="site-footer">
+              Engineering estimation tool — verify critical designs against the referenced standards and, where required, physical testing.
+            </footer>
+          </div>
+        </UnitSystemProvider>
       </AuthProvider>
     </ThemeProvider>
   );

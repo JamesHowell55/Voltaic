@@ -4,6 +4,8 @@ import ComparisonGrid from '../components/ComparisonGrid';
 import SavedCalculations from '../components/SavedCalculations';
 import InfoTooltip from '../components/InfoTooltip';
 import { useTheme } from '../lib/ThemeContext';
+import { useUnitSystem } from '../lib/UnitSystemContext';
+import { toDisplay, unitLabel, UNIT_LENGTH } from '../lib/globalUnits';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData, type ReportGridTable } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
 import { useEntitlement } from '../lib/useEntitlement';
@@ -40,6 +42,10 @@ function fmt(n: number, digits = 2): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 }
 
+function fmtU(valueSI: number, unitSystem: ReturnType<typeof useUnitSystem>['unitSystem'], def: Parameters<typeof toDisplay>[2], digits = 2): string {
+  return fmt(toDisplay(valueSI, unitSystem, def), digits);
+}
+
 const FT_PER_M = 3.28084;
 const MATERIAL_GROUPS: MaterialGroup[] = ['I', 'II', 'IIIa', 'IIIb'];
 const GRID_PDS: (1 | 2 | 3)[] = [1, 2, 3];
@@ -49,12 +55,13 @@ const GRID_COL_LABELS = ['PD1', 'PD2', 'PD3'];
 function buildGridTable(
   title: string, rowLabels: string[], colLabels: string[],
   getValue: (rowIdx: number, colIdx: number) => number, highlightRow: number, highlightCol: number,
+  unit = 'mm',
 ): ReportGridTable {
   return {
     title,
     rowLabels,
     colLabels,
-    cellValues: rowLabels.map((_, ri) => colLabels.map((_, ci) => `${fmt(getValue(ri, ci), 2)} mm`)),
+    cellValues: rowLabels.map((_, ri) => colLabels.map((_, ci) => `${fmt(getValue(ri, ci), 2)} ${unit}`)),
     highlightRow,
     highlightCol,
   };
@@ -64,6 +71,7 @@ export default function CreepageClearanceCalculator() {
   const { accentHex } = useTheme();
   const branding = useBranding();
   const { isPremium } = useEntitlement();
+  const { unitSystem } = useUnitSystem();
 
   const [workingVoltage, setWorkingVoltage] = useState(300);
   const [hvToChassisOverride, setHvToChassisOverride] = useState<number | null>(null);
@@ -166,9 +174,9 @@ export default function CreepageClearanceCalculator() {
 
   const marginFactor = 1 + safetyFactorPercent / 100;
   const creepageGridValue = (voltage: number) => (rowIdx: number, colIdx: number) =>
-    getCreepage(voltage, GRID_PDS[colIdx], MATERIAL_GROUPS[rowIdx]).mm * marginFactor;
+    toDisplay(getCreepage(voltage, GRID_PDS[colIdx], MATERIAL_GROUPS[rowIdx]).mm * marginFactor, unitSystem, UNIT_LENGTH);
   const clearanceGridValue = (voltageKV: number) => (rowIdx: number, colIdx: number) =>
-    getClearance(voltageKV, FIELD_CASES[rowIdx], GRID_PDS[colIdx]).mm * marginFactor;
+    toDisplay(getClearance(voltageKV, FIELD_CASES[rowIdx], GRID_PDS[colIdx]).mm * marginFactor, unitSystem, UNIT_LENGTH);
 
   const creepageHighlightCol = GRID_PDS.indexOf(pollutionDegree as 1 | 2 | 3);
   const creepageHighlightRow = MATERIAL_GROUPS.indexOf(materialGroup);
@@ -177,17 +185,17 @@ export default function CreepageClearanceCalculator() {
 
   const gridTables: ReportGridTable[] = useMemo(() => {
     const tables = [
-      buildGridTable(`Creepage @ Working Voltage (${fmt(workingVoltage, 0)} V)`, MATERIAL_GROUPS, GRID_COL_LABELS, creepageGridValue(workingVoltage), creepageHighlightRow, creepageHighlightCol),
-      buildGridTable(`Creepage @ HV to Chassis (${fmt(hvToChassis, 0)} V)`, MATERIAL_GROUPS, GRID_COL_LABELS, creepageGridValue(hvToChassis), creepageHighlightRow, creepageHighlightCol),
-      buildGridTable(`Clearance @ Working Voltage (${fmt(workingVoltageForClearanceKV, 3)} kV, altitude-adjusted)`, ['Case A', 'Case B'], GRID_COL_LABELS, clearanceGridValue(workingVoltageForClearanceKV), clearanceHighlightRow, clearanceHighlightCol),
-      buildGridTable(`Clearance @ HV to Chassis (${fmt(hvToChassisForClearanceKV, 3)} kV, altitude-adjusted)`, ['Case A', 'Case B'], GRID_COL_LABELS, clearanceGridValue(hvToChassisForClearanceKV), clearanceHighlightRow, clearanceHighlightCol),
+      buildGridTable(`Creepage @ Working Voltage (${fmt(workingVoltage, 0)} V)`, MATERIAL_GROUPS, GRID_COL_LABELS, creepageGridValue(workingVoltage), creepageHighlightRow, creepageHighlightCol, unitLabel(unitSystem, UNIT_LENGTH)),
+      buildGridTable(`Creepage @ HV to Chassis (${fmt(hvToChassis, 0)} V)`, MATERIAL_GROUPS, GRID_COL_LABELS, creepageGridValue(hvToChassis), creepageHighlightRow, creepageHighlightCol, unitLabel(unitSystem, UNIT_LENGTH)),
+      buildGridTable(`Clearance @ Working Voltage (${fmt(workingVoltageForClearanceKV, 3)} kV, altitude-adjusted)`, ['Case A', 'Case B'], GRID_COL_LABELS, clearanceGridValue(workingVoltageForClearanceKV), clearanceHighlightRow, clearanceHighlightCol, unitLabel(unitSystem, UNIT_LENGTH)),
+      buildGridTable(`Clearance @ HV to Chassis (${fmt(hvToChassisForClearanceKV, 3)} kV, altitude-adjusted)`, ['Case A', 'Case B'], GRID_COL_LABELS, clearanceGridValue(hvToChassisForClearanceKV), clearanceHighlightRow, clearanceHighlightCol, unitLabel(unitSystem, UNIT_LENGTH)),
     ];
     if (ed332ClearanceVoltageKV !== null) {
-      tables.push(buildGridTable(`Clearance @ ED-332 Transient (${fmt(ed332TransientV, 0)} VDC, ${fmt(ed332ClearanceVoltageKV, 3)} kV altitude-adjusted)`, ['Case A', 'Case B'], GRID_COL_LABELS, clearanceGridValue(ed332ClearanceVoltageKV), clearanceHighlightRow, clearanceHighlightCol));
+      tables.push(buildGridTable(`Clearance @ ED-332 Transient (${fmt(ed332TransientV, 0)} VDC, ${fmt(ed332ClearanceVoltageKV, 3)} kV altitude-adjusted)`, ['Case A', 'Case B'], GRID_COL_LABELS, clearanceGridValue(ed332ClearanceVoltageKV), clearanceHighlightRow, clearanceHighlightCol, unitLabel(unitSystem, UNIT_LENGTH)));
     }
     return tables;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workingVoltage, hvToChassis, workingVoltageForClearanceKV, hvToChassisForClearanceKV, ed332ClearanceVoltageKV, ed332TransientV, marginFactor, creepageHighlightRow, creepageHighlightCol, clearanceHighlightRow, clearanceHighlightCol]);
+  }, [workingVoltage, hvToChassis, workingVoltageForClearanceKV, hvToChassisForClearanceKV, ed332ClearanceVoltageKV, ed332TransientV, marginFactor, creepageHighlightRow, creepageHighlightCol, clearanceHighlightRow, clearanceHighlightCol, unitSystem]);
 
   const calculationSteps: CalcStepData[] = useMemo(() => {
     const stepsOut: CalcStepData[] = [
@@ -266,14 +274,14 @@ export default function CreepageClearanceCalculator() {
 
   const outputSections: ReportSection[] = useMemo(() => {
     const requiredDistanceRows: ReportRow[] = [
-      { label: 'Required clearance, working voltage (with margin)', value: `${fmt(clearanceWithMargin, 2)} mm` },
-      { label: 'Required clearance, HV to chassis (with margin)', value: `${fmt(clearanceHvWithMargin, 2)} mm` },
-      { label: 'Required creepage, working voltage (with margin)', value: pollutionDegree === 4 ? 'N/A' : `${fmt(creepageWithMargin ?? 0, 2)} mm` },
-      { label: 'Required creepage, HV to chassis (with margin)', value: pollutionDegree === 4 ? 'N/A' : `${fmt(creepageHvWithMargin ?? 0, 2)} mm` },
+      { label: 'Required clearance, working voltage (with margin)', value: `${fmtU(clearanceWithMargin, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` },
+      { label: 'Required clearance, HV to chassis (with margin)', value: `${fmtU(clearanceHvWithMargin, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` },
+      { label: 'Required creepage, working voltage (with margin)', value: pollutionDegree === 4 ? 'N/A' : `${fmtU(creepageWithMargin ?? 0, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` },
+      { label: 'Required creepage, HV to chassis (with margin)', value: pollutionDegree === 4 ? 'N/A' : `${fmtU(creepageHvWithMargin ?? 0, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` },
       { label: 'Altitude correction factor', value: fmt(altCorrection.factor, 2) },
     ];
     if (ed332ClearanceVoltageKV !== null && clearanceEd332WithMargin !== null) {
-      requiredDistanceRows.push({ label: 'Required clearance, ED-332 abnormal transient (with margin)', value: `${fmt(clearanceEd332WithMargin, 2)} mm` });
+      requiredDistanceRows.push({ label: 'Required clearance, ED-332 abnormal transient (with margin)', value: `${fmtU(clearanceEd332WithMargin, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` });
     }
     return [
     {
@@ -284,11 +292,11 @@ export default function CreepageClearanceCalculator() {
       heading: "Paschen's Law cross-check",
       rows: [
         { label: 'Breakdown voltage at this gap', value: `${fmt(paschenV, 0)} V` },
-        { label: 'Min. gap for working voltage', value: `${fmt(paschenMinGapMm, 3)} mm` },
+        { label: 'Min. gap for working voltage', value: `${fmtU(paschenMinGapMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` },
       ],
     },
     ];
-  }, [clearanceWithMargin, clearanceHvWithMargin, pollutionDegree, creepageWithMargin, creepageHvWithMargin, altCorrection, paschenV, paschenMinGapMm, ed332ClearanceVoltageKV, clearanceEd332WithMargin]);
+  }, [clearanceWithMargin, clearanceHvWithMargin, pollutionDegree, creepageWithMargin, creepageHvWithMargin, altCorrection, paschenV, paschenMinGapMm, ed332ClearanceVoltageKV, clearanceEd332WithMargin, unitSystem]);
 
   const handleExportPdf = () => {
     exportReportToPdf({
@@ -500,6 +508,7 @@ export default function CreepageClearanceCalculator() {
               getValue={creepageGridValue(workingVoltage)}
               highlightRow={creepageHighlightRow}
               highlightCol={creepageHighlightCol}
+              unit={unitLabel(unitSystem, UNIT_LENGTH)}
             />
             <ComparisonGrid
               title={`Creepage @ HV to Chassis (${fmt(hvToChassis, 0)} V)`}
@@ -508,6 +517,7 @@ export default function CreepageClearanceCalculator() {
               getValue={creepageGridValue(hvToChassis)}
               highlightRow={creepageHighlightRow}
               highlightCol={creepageHighlightCol}
+              unit={unitLabel(unitSystem, UNIT_LENGTH)}
             />
             <ComparisonGrid
               title={`Clearance @ Working Voltage (${fmt(workingVoltageForClearanceKV, 3)} kV, altitude-adjusted)`}
@@ -516,6 +526,7 @@ export default function CreepageClearanceCalculator() {
               getValue={clearanceGridValue(workingVoltageForClearanceKV)}
               highlightRow={clearanceHighlightRow}
               highlightCol={clearanceHighlightCol}
+              unit={unitLabel(unitSystem, UNIT_LENGTH)}
             />
             <ComparisonGrid
               title={`Clearance @ HV to Chassis (${fmt(hvToChassisForClearanceKV, 3)} kV, altitude-adjusted)`}
@@ -524,6 +535,7 @@ export default function CreepageClearanceCalculator() {
               getValue={clearanceGridValue(hvToChassisForClearanceKV)}
               highlightRow={clearanceHighlightRow}
               highlightCol={clearanceHighlightCol}
+              unit={unitLabel(unitSystem, UNIT_LENGTH)}
             />
             {ed332ClearanceVoltageKV !== null && (
               <ComparisonGrid
@@ -533,6 +545,7 @@ export default function CreepageClearanceCalculator() {
                 getValue={clearanceGridValue(ed332ClearanceVoltageKV)}
                 highlightRow={clearanceHighlightRow}
                 highlightCol={clearanceHighlightCol}
+                unit={unitLabel(unitSystem, UNIT_LENGTH)}
               />
             )}
           </div>
@@ -547,7 +560,7 @@ export default function CreepageClearanceCalculator() {
             <p className="note" style={{ marginBottom: '0.9rem' }}>
               First-principles physics, independent of the IEC table: air's dielectric breakdown voltage depends on
               the pressure × gap product (p·d). At {fmt(altitude, 0)} {altitudeUnit} the local pressure is{' '}
-              {fmt(pressureKPa, 2)} kPa (vs {fmt(101.325, 2)} kPa at sea level) — for a {fmt(paschenGapMm, 2)} mm gap,
+              {fmt(pressureKPa, 2)} kPa (vs {fmt(101.325, 2)} kPa at sea level) — for a {fmtU(paschenGapMm, unitSystem, UNIT_LENGTH, 3)} {unitLabel(unitSystem, UNIT_LENGTH)} gap,
               p·d = {fmt(paschenPd, 3)} kPa·cm, well above the Paschen minimum ({fmt(paschenMinPd, 3)} kPa·cm),
               so breakdown voltage still falls monotonically as altitude increases — the IEC table's assumption
               holds throughout this range.
@@ -559,7 +572,7 @@ export default function CreepageClearanceCalculator() {
               </div>
               <div className="result-tile">
                 <div className="label">Min. gap for working voltage</div>
-                <div className="value">{fmt(paschenMinGapMm, 3)}<span className="unit">mm</span></div>
+                <div className="value">{fmtU(paschenMinGapMm, unitSystem, UNIT_LENGTH, 3)}<span className="unit">{unitLabel(unitSystem, UNIT_LENGTH)}</span></div>
               </div>
             </div>
             <div style={{ marginTop: '1rem' }}>

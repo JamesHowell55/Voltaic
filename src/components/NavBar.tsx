@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import volteqLogo from '../assets/brand/volteq-logo.svg';
 import ThemeControls from './ThemeControls';
+import UnitSystemToggle from './UnitSystemToggle';
 import NavDropdown from './NavDropdown';
 import { NAV_CATEGORIES, CONVERSIONS_LINK } from '../lib/navCategories';
 import { useAuth } from '../lib/AuthContext';
@@ -30,6 +31,7 @@ export default function NavBar() {
         <NavLink to="/account" className={({ isActive }) => (isActive ? 'active' : '')}>
           {user ? 'Account' : 'Log in'}
         </NavLink>
+        <UnitSystemToggle />
         <ThemeControls />
       </nav>
 
@@ -59,7 +61,8 @@ export default function NavBar() {
           <NavLink to="/account" className={({ isActive }) => (isActive ? 'active' : '')} onClick={() => setMobileOpen(false)}>
             {user ? 'Account' : 'Log in'}
           </NavLink>
-          <div className="navbar-mobile-theme">
+          <div className="navbar-mobile-theme" style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+            <UnitSystemToggle />
             <ThemeControls />
           </div>
         </div>

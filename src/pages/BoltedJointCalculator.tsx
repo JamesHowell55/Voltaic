@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
+import { useUnitSystem } from '../lib/UnitSystemContext';
+import { toDisplay, fromDisplay, unitLabel, UNIT_LENGTH, UNIT_AREA, UNIT_FORCE, UNIT_STRESS, UNIT_MODULUS, UNIT_TORQUE, UNIT_STIFFNESS, UNIT_TEMP, UNIT_CTE, type UnitSystem, type UnitDef } from '../lib/globalUnits';
 import { exportReportToPdf, type ReportSection, type ReportRow, type CalcStepData } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
 import { useEntitlement } from '../lib/useEntitlement';
@@ -48,6 +50,13 @@ function fmt(n: number, digits = 2): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 }
 
+// Formats a value that's always held in SI internally, converting to the
+// selected display unit system first — internal state and the physics engine
+// never see anything but SI.
+function fmtU(valueSI: number, unitSystem: UnitSystem, def: UnitDef, digits = 2): string {
+  return fmt(toDisplay(valueSI, unitSystem, def), digits);
+}
+
 interface SectionFormState extends ClampedSectionInput {
   customIsPolymer?: boolean;
 }
@@ -77,27 +86,27 @@ function applyWasherOverride(washer: WasherPreset | null, override: WasherOverri
   };
 }
 
-function WasherOverrideFields({ washer, override, onChange }: { washer: WasherPreset | null; override: WasherOverrideState; onChange: (patch: Partial<WasherOverrideState>) => void }) {
+function WasherOverrideFields({ washer, override, onChange, unitSystem }: { washer: WasherPreset | null; override: WasherOverrideState; onChange: (patch: Partial<WasherOverrideState>) => void; unitSystem: UnitSystem }) {
   if (!washer) return null;
   const showStiffness = washer.type === 'belleville' || washer.type === 'splitRingSpring';
   return (
     <div className="grid grid-3" style={{ marginTop: '0.4rem', gap: '0.4rem' }}>
       <div className="field">
-        <label style={{ fontSize: '0.7rem' }}>OD override (mm)</label>
-        <input autoComplete="off" type="number" min={0.1} placeholder={String(washer.odMm)} value={override.odMm} onChange={(e) => onChange({ odMm: e.target.value === '' ? '' : Number(e.target.value) })} />
+        <label style={{ fontSize: '0.7rem' }}>OD override ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+        <input autoComplete="off" type="number" min={0.001} placeholder={fmtU(washer.odMm, unitSystem, UNIT_LENGTH, 3)} value={override.odMm === '' ? '' : toDisplay(override.odMm, unitSystem, UNIT_LENGTH)} onChange={(e) => onChange({ odMm: e.target.value === '' ? '' : fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
       </div>
       <div className="field">
-        <label style={{ fontSize: '0.7rem' }}>ID override (mm)</label>
-        <input autoComplete="off" type="number" min={0.1} placeholder={String(washer.idMm)} value={override.idMm} onChange={(e) => onChange({ idMm: e.target.value === '' ? '' : Number(e.target.value) })} />
+        <label style={{ fontSize: '0.7rem' }}>ID override ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+        <input autoComplete="off" type="number" min={0.001} placeholder={fmtU(washer.idMm, unitSystem, UNIT_LENGTH, 3)} value={override.idMm === '' ? '' : toDisplay(override.idMm, unitSystem, UNIT_LENGTH)} onChange={(e) => onChange({ idMm: e.target.value === '' ? '' : fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
       </div>
       <div className="field">
-        <label style={{ fontSize: '0.7rem' }}>Thickness override (mm)</label>
-        <input autoComplete="off" type="number" min={0.01} placeholder={String(washer.thicknessMm)} value={override.thicknessMm} onChange={(e) => onChange({ thicknessMm: e.target.value === '' ? '' : Number(e.target.value) })} />
+        <label style={{ fontSize: '0.7rem' }}>Thickness override ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+        <input autoComplete="off" type="number" min={0.001} placeholder={fmtU(washer.thicknessMm, unitSystem, UNIT_LENGTH, 3)} value={override.thicknessMm === '' ? '' : toDisplay(override.thicknessMm, unitSystem, UNIT_LENGTH)} onChange={(e) => onChange({ thicknessMm: e.target.value === '' ? '' : fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
       </div>
       {showStiffness && (
         <div className="field" style={{ gridColumn: '1 / -1' }}>
-          <label style={{ fontSize: '0.7rem' }}>Custom stiffness override (N/mm)</label>
-          <input autoComplete="off" type="number" min={1} placeholder="from geometry estimate" value={override.customStiffnessNPerMm} onChange={(e) => onChange({ customStiffnessNPerMm: e.target.value === '' ? '' : Number(e.target.value) })} />
+          <label style={{ fontSize: '0.7rem' }}>Custom stiffness override ({unitLabel(unitSystem, UNIT_STIFFNESS)})</label>
+          <input autoComplete="off" type="number" min={0.01} placeholder="from geometry estimate" value={override.customStiffnessNPerMm === '' ? '' : toDisplay(override.customStiffnessNPerMm, unitSystem, UNIT_STIFFNESS)} onChange={(e) => onChange({ customStiffnessNPerMm: e.target.value === '' ? '' : fromDisplay(Number(e.target.value), unitSystem, UNIT_STIFFNESS) })} />
         </div>
       )}
     </div>
@@ -108,6 +117,7 @@ export default function BoltedJointCalculator() {
   const { accentHex } = useTheme();
   const branding = useBranding();
   const { isPremium } = useEntitlement();
+  const { unitSystem } = useUnitSystem();
 
   const [mode, setMode] = useState<SolveMode>('torqueToPreload');
   const [sizeId, setSizeId] = useState('M8');
@@ -144,6 +154,8 @@ export default function BoltedJointCalculator() {
   const [customBearingMu, setCustomBearingMu] = useState(0.15);
 
   const [targetPreloadN, setTargetPreloadN] = useState(15000);
+  const [preloadEntryMode, setPreloadEntryMode] = useState<'absolute' | 'percentYield'>('absolute');
+  const [percentOfYield, setPercentOfYield] = useState(70);
   const [targetTorqueNm, setTargetTorqueNm] = useState(25);
   const [snugTorqueNm, setSnugTorqueNm] = useState(5);
   const [additionalAngleDeg, setAdditionalAngleDeg] = useState(90);
@@ -161,14 +173,14 @@ export default function BoltedJointCalculator() {
     includeSpringWasherCompliance, threadEngagementMode, nutType, nutPropertyClassBand,
     engagementLengthMm, engagementInputMode, boltLengthMm, insertVariant, insertLengthRatio,
     frictionPresetId, customThreadMu, useSeparateBearingFriction, bearingFrictionPresetId, customBearingMu,
-    targetPreloadN, targetTorqueNm, snugTorqueNm, additionalAngleDeg,
+    targetPreloadN, preloadEntryMode, percentOfYield, targetTorqueNm, snugTorqueNm, additionalAngleDeg,
     tighteningMethodId, scatterConvention, externalAxialLoadN, externalShearForceN, safetyFactorTarget,
   }), [mode, sizeId, headType, propertyClassId, customTensileMPa, customProofMPa, holeFit,
     sections, headWasherType, headWasherSpecId, nutWasherType, nutWasherSpecId,
     includeSpringWasherCompliance, threadEngagementMode, nutType, nutPropertyClassBand,
     engagementLengthMm, engagementInputMode, boltLengthMm, insertVariant, insertLengthRatio,
     frictionPresetId, customThreadMu, useSeparateBearingFriction, bearingFrictionPresetId, customBearingMu,
-    targetPreloadN, targetTorqueNm, snugTorqueNm, additionalAngleDeg,
+    targetPreloadN, preloadEntryMode, percentOfYield, targetTorqueNm, snugTorqueNm, additionalAngleDeg,
     tighteningMethodId, scatterConvention, externalAxialLoadN, externalShearForceN, safetyFactorTarget]);
 
   const restoreInputs = useCallback((inp: Record<string, unknown>) => {
@@ -200,6 +212,8 @@ export default function BoltedJointCalculator() {
     if (v.bearingFrictionPresetId) setBearingFrictionPresetId(v.bearingFrictionPresetId);
     if (v.customBearingMu != null) setCustomBearingMu(v.customBearingMu);
     if (v.targetPreloadN != null) setTargetPreloadN(v.targetPreloadN);
+    if (v.preloadEntryMode) setPreloadEntryMode(v.preloadEntryMode);
+    if (v.percentOfYield != null) setPercentOfYield(v.percentOfYield);
     if (v.targetTorqueNm != null) setTargetTorqueNm(v.targetTorqueNm);
     if (v.snugTorqueNm != null) setSnugTorqueNm(v.snugTorqueNm);
     if (v.additionalAngleDeg != null) setAdditionalAngleDeg(v.additionalAngleDeg);
@@ -301,6 +315,13 @@ export default function BoltedJointCalculator() {
   const derivedEngagementLengthMm = Math.max(0, boltLengthMm - upperSectionsThicknessMm);
   const effectiveEngagementLengthMm = engagementInputMode === 'boltLength' ? derivedEngagementLengthMm : engagementLengthMm;
 
+  // "% of bolt yield" preload entry: derives a target preload directly from a
+  // percentage of the bolt's proof strength (the practical elastic-limit figure
+  // used everywhere else in this tool as the "yield" reference) — 70% is a
+  // common rule-of-thumb target for removable (re-usable) fastener joints.
+  const derivedPreloadFromPercentN = (percentOfYield / 100) * propertyClass.proofStrengthMPa * size.tensileStressAreaMm2;
+  const effectiveTargetPreloadN = preloadEntryMode === 'percentYield' ? derivedPreloadFromPercentN : targetPreloadN;
+
   const jointInput: JointInput = useMemo(
     () => ({
       mode,
@@ -317,7 +338,7 @@ export default function BoltedJointCalculator() {
       engagementLengthMm: threadEngagementMode === 'nutAndBolt' ? undefined : effectiveEngagementLengthMm,
       threadFrictionMu,
       bearingFrictionMu,
-      targetPreloadN: mode === 'preloadToTorque' ? targetPreloadN : undefined,
+      targetPreloadN: mode === 'preloadToTorque' ? effectiveTargetPreloadN : undefined,
       targetTorqueNm: mode === 'torqueToPreload' ? targetTorqueNm : undefined,
       snugTorqueNm: mode === 'torqueAndAngle' ? snugTorqueNm : undefined,
       additionalAngleDeg: mode === 'torqueAndAngle' ? additionalAngleDeg : undefined,
@@ -331,7 +352,7 @@ export default function BoltedJointCalculator() {
     [
       mode, size, headType, propertyClass, sections, advancedMode, effectiveHeadWasher, effectiveNutWasher, includeSpringWasherCompliance,
       threadEngagementMode, effectiveNut, effectiveThreadedInsert, effectiveEngagementLengthMm, threadFrictionMu, bearingFrictionMu,
-      targetPreloadN, targetTorqueNm, snugTorqueNm, additionalAngleDeg, tighteningMethod, scatterConvention, externalAxialLoadN, externalShearForceN, safetyFactorTarget,
+      effectiveTargetPreloadN, targetTorqueNm, snugTorqueNm, additionalAngleDeg, tighteningMethod, scatterConvention, externalAxialLoadN, externalShearForceN, safetyFactorTarget,
       includeThermalEffects, assemblyTempC, operatingTempC, boltCteOverridePerC,
     ]
   );
@@ -346,21 +367,21 @@ export default function BoltedJointCalculator() {
   const failureGuidance: FailureItem[] = [];
   if (!result.geometryValidity.holeClearanceOk) {
     failureGuidance.push({
-      issue: `Clearance hole too small (radial clearance ${fmt(result.geometryValidity.holeClearanceRadialMm, 2)} mm, needs ≥ 0.1 mm).`,
+      issue: `Clearance hole too small (radial clearance ${fmtU(result.geometryValidity.holeClearanceRadialMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}, needs ≥ ${fmtU(0.1, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}).`,
       guidance: 'Increase the affected section\'s Hole Ø — use the "Use suggested" button in the Clamped stack-up card, or pick a looser fit (Free) in the Fastener card.',
       severity: 'fail',
     });
   }
   if (!result.boltStressPass) {
     failureGuidance.push({
-      issue: `Bolt stress safety factor ${fmt(result.boltStressSafetyFactor, 2)} is below the target ${fmt(safetyFactorTarget, 2)} (σ = ${fmt(result.boltTensileStressMPa, 1)} MPa vs. proof ${fmt(propertyClass.proofStrengthMPa, 0)} MPa).`,
+      issue: `Bolt stress safety factor ${fmt(result.boltStressSafetyFactor, 2)} is below the target ${fmt(safetyFactorTarget, 2)} (σ = ${fmtU(result.boltTensileStressMPa, unitSystem, UNIT_STRESS, 1)} ${unitLabel(unitSystem, UNIT_STRESS)} vs. proof ${fmtU(propertyClass.proofStrengthMPa, unitSystem, UNIT_STRESS, 0)} ${unitLabel(unitSystem, UNIT_STRESS)}).`,
       guidance: 'Use a larger bolt diameter or a higher property class, reduce the target preload/torque/rotation or the external axial load, or lower the safety factor target if appropriate for this application.',
       severity: 'fail',
     });
   }
   if (!result.memberBearingPass[0]) {
     failureGuidance.push({
-      issue: `Head-side bearing safety factor ${fmt(result.memberBearingSafetyFactor[0], 2)} is below target (σ = ${fmt(result.memberBearingStressMPa[0], 1)} MPa).`,
+      issue: `Head-side bearing safety factor ${fmt(result.memberBearingSafetyFactor[0], 2)} is below target (σ = ${fmtU(result.memberBearingStressMPa[0], unitSystem, UNIT_STRESS, 1)} ${unitLabel(unitSystem, UNIT_STRESS)}).`,
       guidance: 'Add a wider washer under the head (or switch to Advanced mode and increase its OD), choose a stronger material for the first clamped section, or use a larger bolt/head size.',
       severity: 'fail',
     });
@@ -368,14 +389,14 @@ export default function BoltedJointCalculator() {
   const lastBearingIdx = result.memberBearingPass.length - 1;
   if (threadEngagementMode === 'nutAndBolt' && !result.memberBearingPass[lastBearingIdx]) {
     failureGuidance.push({
-      issue: `Nut-side bearing safety factor ${fmt(result.memberBearingSafetyFactor[lastBearingIdx], 2)} is below target (σ = ${fmt(result.memberBearingStressMPa[lastBearingIdx], 1)} MPa).`,
+      issue: `Nut-side bearing safety factor ${fmt(result.memberBearingSafetyFactor[lastBearingIdx], 2)} is below target (σ = ${fmtU(result.memberBearingStressMPa[lastBearingIdx], unitSystem, UNIT_STRESS, 1)} ${unitLabel(unitSystem, UNIT_STRESS)}).`,
       guidance: 'Add a wider washer under the nut, choose a stronger material for the last clamped section, or use a larger nut/bolt size.',
       severity: 'fail',
     });
   }
   if (!result.geometryValidity.engagementLengthOk) {
     failureGuidance.push({
-      issue: `Thread engagement too short (${fmt(effectiveEngagementLengthMm, 1)} mm ${engagementInputMode === 'boltLength' ? 'derived from bolt length' : 'provided'}, needs ≥ ${fmt(result.geometryValidity.minEngagementLengthMm, 1)} mm).`,
+      issue: `Thread engagement too short (${fmtU(effectiveEngagementLengthMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)} ${engagementInputMode === 'boltLength' ? 'derived from bolt length' : 'provided'}, needs ≥ ${fmtU(result.geometryValidity.minEngagementLengthMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}).`,
       guidance: engagementInputMode === 'boltLength'
         ? 'Use a longer bolt, use a stronger tapped material for the last section, or switch to a threaded insert (which can raise the effective thread strength).'
         : 'Increase the engagement length, use a stronger tapped material for the last section, or switch to a threaded insert (which can raise the effective thread strength).',
@@ -391,7 +412,7 @@ export default function BoltedJointCalculator() {
   }
   if (result.jointSeparates) {
     failureGuidance.push({
-      issue: `Joint separates under the applied external load (member force margin ${fmt(result.jointSeparationMarginN, 0)} N).`,
+      issue: `Joint separates under the applied external load (member force margin ${fmtU(result.jointSeparationMarginN, unitSystem, UNIT_FORCE, 0)} ${unitLabel(unitSystem, UNIT_FORCE)}).`,
       guidance: 'Increase the target preload/torque/rotation, reduce the external axial load, or increase the joint\'s stiffness ratio (e.g. a stiffer or shorter grip) so more of the load stays carried by clamping force.',
       severity: 'fail',
     });
@@ -405,7 +426,7 @@ export default function BoltedJointCalculator() {
   }
   if (externalShearForceN > 0 && result.stressTable.nominal.vonMisesSafetyFactor < safetyFactorTarget) {
     failureGuidance.push({
-      issue: `Combined (von Mises) stress safety factor ${fmt(result.stressTable.nominal.vonMisesSafetyFactor, 2)} is below the target (τ = ${fmt(result.stressTable.nominal.shearStressMPa, 1)} MPa from the external shear force).`,
+      issue: `Combined (von Mises) stress safety factor ${fmt(result.stressTable.nominal.vonMisesSafetyFactor, 2)} is below the target (τ = ${fmtU(result.stressTable.nominal.shearStressMPa, unitSystem, UNIT_STRESS, 1)} ${unitLabel(unitSystem, UNIT_STRESS)} from the external shear force).`,
       guidance: 'Reduce the external shear force, use a larger bolt diameter, or add a dowel/shear pin so the bolt doesn\'t have to carry the transverse load alone.',
       severity: 'fail',
     });
@@ -438,7 +459,7 @@ export default function BoltedJointCalculator() {
     if (!t.memberBearingPass.every(Boolean)) reasons.push('a bearing face SF');
     if (t.jointSeparates) reasons.push('joint separation');
     failureGuidance.push({
-      issue: `Fails at operating temperature (${fmt(operatingTempC, 0)}°C) though it passes at assembly temperature: ${reasons.join(', ')}.`,
+      issue: `Fails at operating temperature (${fmtU(operatingTempC, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)}) though it passes at assembly temperature: ${reasons.join(', ')}.`,
       guidance:
         t.deltaForceN > 0
           ? 'Heating increases clamping force here (members expand more than the bolt) — reduce assembly preload/torque, use a bolt material with a CTE closer to the clamped members, or re-check the bolt/bearing stress margin at the hot condition.'
@@ -479,7 +500,10 @@ export default function BoltedJointCalculator() {
       steps.push({
         title: mode === 'preloadToTorque' ? 'Torque required for target preload (Shigley closed form)' : 'Preload achieved for target torque (Shigley closed form, inverted)',
         formula: 'T = F·dm/2·[(l+π·f·dm·sec30°)/(π·dm−f·l·sec30°)] + F·fc·dc/2',
-        substitution: `dm=${fmt(size.pitchDiameterMm, 3)} mm, l=${fmt(size.pitchMm, 3)} mm, f=${fmt(threadFrictionMu, 3)}, fc=${fmt(bearingFrictionMu, 3)}`,
+        substitution:
+          mode === 'preloadToTorque' && preloadEntryMode === 'percentYield'
+            ? `Target = ${fmt(percentOfYield, 0)}% of proof (${fmt(propertyClass.proofStrengthMPa, 0)} MPa × As ${fmt(size.tensileStressAreaMm2, 1)} mm² = ${fmt(effectiveTargetPreloadN, 0)} N); dm=${fmt(size.pitchDiameterMm, 3)} mm, l=${fmt(size.pitchMm, 3)} mm, f=${fmt(threadFrictionMu, 3)}, fc=${fmt(bearingFrictionMu, 3)}`
+            : `dm=${fmt(size.pitchDiameterMm, 3)} mm, l=${fmt(size.pitchMm, 3)} mm, f=${fmt(threadFrictionMu, 3)}, fc=${fmt(bearingFrictionMu, 3)}`,
         result: `F = ${fmt(result.preloadN, 0)} N, T = ${fmt(result.torqueNm, 2)} N·m (thread term ${fmt(result.torqueBreakdown.threadTermNm, 2)} + bearing term ${fmt(result.torqueBreakdown.bearingTermNm, 2)}), K-factor ≈ ${fmt(result.simplifiedKFactor, 3)}`,
       });
     }
@@ -555,7 +579,7 @@ export default function BoltedJointCalculator() {
       });
     }
     return steps;
-  }, [result, mode, size, threadFrictionMu, bearingFrictionMu, snugTorqueNm, additionalAngleDeg, tighteningMethod, scatterConvention, externalAxialLoadN, externalShearForceN, sections, safetyFactorTarget, assemblyTempC, operatingTempC, boltCteOverridePerC]);
+  }, [result, mode, size, propertyClass, threadFrictionMu, bearingFrictionMu, preloadEntryMode, percentOfYield, effectiveTargetPreloadN, snugTorqueNm, additionalAngleDeg, tighteningMethod, scatterConvention, externalAxialLoadN, externalShearForceN, sections, safetyFactorTarget, assemblyTempC, operatingTempC, boltCteOverridePerC]);
 
   const bomRows: ReportRow[] = useMemo(() => {
     const rows: ReportRow[] = [{ label: 'Bolt', value: buildBoltPartNumber(size, headType, propertyClass.label) }];
@@ -573,34 +597,34 @@ export default function BoltedJointCalculator() {
     const fastenerRows: ReportRow[] = [
       { label: 'Fastener size', value: `${size.label} (${headType === 'hexHead' ? 'Hex head' : 'Socket head cap screw'})` },
       { label: 'Property class', value: propertyClass.label },
-      { label: 'Pitch diameter', value: `${fmt(size.pitchDiameterMm, 3)} mm` },
+      { label: 'Pitch diameter', value: `${fmtU(size.pitchDiameterMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` },
       { label: 'Thread engagement', value: threadEngagementMode === 'nutAndBolt' ? `Nut & bolt (${nut?.specStandard ?? ''})` : threadEngagementMode === 'tappedBlindOrThrough' ? 'Tapped directly into material' : `Threaded insert (${threadedInsertPreset?.partNumber ?? ''})` },
       { label: 'Thread friction μ', value: fmt(threadFrictionMu, 3) },
       { label: 'Bearing friction μ', value: fmt(bearingFrictionMu, 3) },
       { label: 'Tightening method', value: tighteningMethod.label },
       { label: 'Safety factor target', value: fmt(safetyFactorTarget, 2) },
-      { label: 'External axial load', value: `${fmt(externalAxialLoadN, 0)} N` },
-      { label: 'External shear force', value: `${fmt(externalShearForceN, 0)} N` },
+      { label: 'External axial load', value: `${fmtU(externalAxialLoadN, unitSystem, UNIT_FORCE, 0)} ${unitLabel(unitSystem, UNIT_FORCE)}` },
+      { label: 'External shear force', value: `${fmtU(externalShearForceN, unitSystem, UNIT_FORCE, 0)} ${unitLabel(unitSystem, UNIT_FORCE)}` },
     ];
     const stackRows: ReportRow[] = sections.map((s, i) => ({
       label: `Section ${i + 1} (${getClampedMaterial(s.materialId).name})`,
-      value: `t=${s.thicknessMm} mm, hole=${s.holeDiameterMm} mm, OD=${s.outerDiameterMm} mm`,
+      value: `t=${fmtU(s.thicknessMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}, hole=${fmtU(s.holeDiameterMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}, OD=${fmtU(s.outerDiameterMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}`,
     }));
     return [
       { heading: 'Fastener & joint setup', rows: fastenerRows },
       { heading: 'Clamped stack-up', rows: stackRows },
       { heading: 'Selected components (representative part designations)', rows: bomRows },
     ];
-  }, [size, headType, propertyClass, threadEngagementMode, nut, threadedInsertPreset, threadFrictionMu, bearingFrictionMu, tighteningMethod, safetyFactorTarget, externalAxialLoadN, externalShearForceN, sections, bomRows]);
+  }, [size, headType, propertyClass, threadEngagementMode, nut, threadedInsertPreset, threadFrictionMu, bearingFrictionMu, tighteningMethod, safetyFactorTarget, externalAxialLoadN, externalShearForceN, sections, bomRows, unitSystem]);
 
   const outputSections: ReportSection[] = useMemo(
     () => [
       {
         heading: 'Preload & torque',
         rows: [
-          { label: 'Preload', value: `${fmt(result.preloadN, 0)} N` },
-          { label: 'Torque', value: `${fmt(result.torqueNm, 2)} N·m` },
-          { label: 'Scatter band', value: `${fmt(result.preloadScatterBand.minN, 0)}–${fmt(result.preloadScatterBand.maxN, 0)} N` },
+          { label: 'Preload', value: `${fmtU(result.preloadN, unitSystem, UNIT_FORCE, 0)} ${unitLabel(unitSystem, UNIT_FORCE)}` },
+          { label: 'Torque', value: `${fmtU(result.torqueNm, unitSystem, UNIT_TORQUE, 2)} ${unitLabel(unitSystem, UNIT_TORQUE)}` },
+          { label: 'Scatter band', value: `${fmtU(result.preloadScatterBand.minN, unitSystem, UNIT_FORCE, 0)}–${fmtU(result.preloadScatterBand.maxN, unitSystem, UNIT_FORCE, 0)} ${unitLabel(unitSystem, UNIT_FORCE)}` },
           { label: '% of proof load', value: `${fmt(result.preloadPercentOfProof, 0)}%` },
         ],
       },
@@ -608,48 +632,48 @@ export default function BoltedJointCalculator() {
         heading: 'Stress & margins',
         rows: [
           { label: 'Bolt stress safety factor', value: fmt(result.boltStressSafetyFactor, 2) },
-          { label: 'Joint separation margin', value: `${fmt(result.jointSeparationMarginN, 0)} N` },
+          { label: 'Joint separation margin', value: `${fmtU(result.jointSeparationMarginN, unitSystem, UNIT_FORCE, 0)} ${unitLabel(unitSystem, UNIT_FORCE)}` },
         ],
       },
       {
         heading: 'Joint separation (nominal / min / max)',
         rows: [
-          { label: 'Separation margin', value: `${fmt(result.stressTable.nominal.jointSeparationMarginN, 0)} / ${fmt(result.stressTable.min.jointSeparationMarginN, 0)} / ${fmt(result.stressTable.max.jointSeparationMarginN, 0)} N` },
+          { label: `Separation margin [${unitLabel(unitSystem, UNIT_FORCE)}]`, value: `${fmtU(result.stressTable.nominal.jointSeparationMarginN, unitSystem, UNIT_FORCE, 0)} / ${fmtU(result.stressTable.min.jointSeparationMarginN, unitSystem, UNIT_FORCE, 0)} / ${fmtU(result.stressTable.max.jointSeparationMarginN, unitSystem, UNIT_FORCE, 0)}` },
           { label: 'Safety factor', value: `${fmt(result.stressTable.nominal.jointSeparationSafetyFactor, 2)} / ${fmt(result.stressTable.min.jointSeparationSafetyFactor, 2)} / ${fmt(result.stressTable.max.jointSeparationSafetyFactor, 2)}` },
         ],
       },
       {
-        heading: 'Bolt stresses (nominal / min / max, MPa)',
+        heading: `Bolt stresses (nominal / min / max, ${unitLabel(unitSystem, UNIT_STRESS)})`,
         rows: [
-          { label: 'Preload stress', value: `${fmt(result.stressTable.nominal.preloadStressMPa, 1)} / ${fmt(result.stressTable.min.preloadStressMPa, 1)} / ${fmt(result.stressTable.max.preloadStressMPa, 1)}` },
-          { label: 'Tensile stress', value: `${fmt(result.stressTable.nominal.tensileStressMPa, 1)} / ${fmt(result.stressTable.min.tensileStressMPa, 1)} / ${fmt(result.stressTable.max.tensileStressMPa, 1)}` },
-          { label: 'Shear stress', value: `${fmt(result.stressTable.nominal.shearStressMPa, 1)} / ${fmt(result.stressTable.min.shearStressMPa, 1)} / ${fmt(result.stressTable.max.shearStressMPa, 1)}` },
-          { label: 'Von Mises stress', value: `${fmt(result.stressTable.nominal.vonMisesStressMPa, 1)} / ${fmt(result.stressTable.min.vonMisesStressMPa, 1)} / ${fmt(result.stressTable.max.vonMisesStressMPa, 1)}` },
+          { label: 'Preload stress', value: `${fmtU(result.stressTable.nominal.preloadStressMPa, unitSystem, UNIT_STRESS, 1)} / ${fmtU(result.stressTable.min.preloadStressMPa, unitSystem, UNIT_STRESS, 1)} / ${fmtU(result.stressTable.max.preloadStressMPa, unitSystem, UNIT_STRESS, 1)}` },
+          { label: 'Tensile stress', value: `${fmtU(result.stressTable.nominal.tensileStressMPa, unitSystem, UNIT_STRESS, 1)} / ${fmtU(result.stressTable.min.tensileStressMPa, unitSystem, UNIT_STRESS, 1)} / ${fmtU(result.stressTable.max.tensileStressMPa, unitSystem, UNIT_STRESS, 1)}` },
+          { label: 'Shear stress', value: `${fmtU(result.stressTable.nominal.shearStressMPa, unitSystem, UNIT_STRESS, 1)} / ${fmtU(result.stressTable.min.shearStressMPa, unitSystem, UNIT_STRESS, 1)} / ${fmtU(result.stressTable.max.shearStressMPa, unitSystem, UNIT_STRESS, 1)}` },
+          { label: 'Von Mises stress', value: `${fmtU(result.stressTable.nominal.vonMisesStressMPa, unitSystem, UNIT_STRESS, 1)} / ${fmtU(result.stressTable.min.vonMisesStressMPa, unitSystem, UNIT_STRESS, 1)} / ${fmtU(result.stressTable.max.vonMisesStressMPa, unitSystem, UNIT_STRESS, 1)}` },
         ],
       },
       {
         heading: 'Thread stress',
         rows: [
-          { label: 'External (bolt) thread', value: `${fmt(result.threadStress.externalThreadStressMPa, 1)} MPa, SF ${fmt(result.threadStress.externalThreadSafetyFactor, 2)}` },
-          { label: 'Internal thread', value: `${fmt(result.threadStress.internalThreadStressMPa, 1)} MPa, SF ${fmt(result.threadStress.internalThreadSafetyFactor, 2)}` },
+          { label: 'External (bolt) thread', value: `${fmtU(result.threadStress.externalThreadStressMPa, unitSystem, UNIT_STRESS, 1)} ${unitLabel(unitSystem, UNIT_STRESS)}, SF ${fmt(result.threadStress.externalThreadSafetyFactor, 2)}` },
+          { label: 'Internal thread', value: `${fmtU(result.threadStress.internalThreadStressMPa, unitSystem, UNIT_STRESS, 1)} ${unitLabel(unitSystem, UNIT_STRESS)}, SF ${fmt(result.threadStress.internalThreadSafetyFactor, 2)}` },
         ],
       },
       {
         heading: 'Clamped parts',
         rows: [
-          { label: 'Pull-through stress', value: `${fmt(result.clampedPartsChecks.pullThroughStressMPa, 1)} MPa, SF ${fmt(result.clampedPartsChecks.pullThroughSafetyFactor, 2)}` },
-          { label: 'Pin bearing', value: `${fmt(result.clampedPartsChecks.pinBearingStressMPa, 1)} MPa, SF ${fmt(result.clampedPartsChecks.pinBearingSafetyFactor, 2)}` },
-          { label: 'Bearing — top (head side)', value: `${fmt(result.clampedPartsChecks.bearingTopStressMPa, 1)} MPa, SF ${fmt(result.clampedPartsChecks.bearingTopSafetyFactor, 2)}` },
-          { label: 'Bearing — bottom (nut/tapped side)', value: `${fmt(result.clampedPartsChecks.bearingBottomStressMPa, 1)} MPa, SF ${fmt(result.clampedPartsChecks.bearingBottomSafetyFactor, 2)}` },
+          { label: 'Pull-through stress', value: `${fmtU(result.clampedPartsChecks.pullThroughStressMPa, unitSystem, UNIT_STRESS, 1)} ${unitLabel(unitSystem, UNIT_STRESS)}, SF ${fmt(result.clampedPartsChecks.pullThroughSafetyFactor, 2)}` },
+          { label: 'Pin bearing', value: `${fmtU(result.clampedPartsChecks.pinBearingStressMPa, unitSystem, UNIT_STRESS, 1)} ${unitLabel(unitSystem, UNIT_STRESS)}, SF ${fmt(result.clampedPartsChecks.pinBearingSafetyFactor, 2)}` },
+          { label: 'Bearing — top (head side)', value: `${fmtU(result.clampedPartsChecks.bearingTopStressMPa, unitSystem, UNIT_STRESS, 1)} ${unitLabel(unitSystem, UNIT_STRESS)}, SF ${fmt(result.clampedPartsChecks.bearingTopSafetyFactor, 2)}` },
+          { label: 'Bearing — bottom (nut/tapped side)', value: `${fmtU(result.clampedPartsChecks.bearingBottomStressMPa, unitSystem, UNIT_STRESS, 1)} ${unitLabel(unitSystem, UNIT_STRESS)}, SF ${fmt(result.clampedPartsChecks.bearingBottomSafetyFactor, 2)}` },
         ],
       },
       ...(result.thermalResult
         ? [
             {
-              heading: `Thermal effects (assembly ${fmt(assemblyTempC, 0)}°C → operating ${fmt(operatingTempC, 0)}°C)`,
+              heading: `Thermal effects (assembly ${fmtU(assemblyTempC, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)} → operating ${fmtU(operatingTempC, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)})`,
               rows: [
-                { label: 'Preload change (ΔF)', value: `${result.thermalResult.deltaForceN >= 0 ? '+' : ''}${fmt(result.thermalResult.deltaForceN, 0)} N` },
-                { label: 'Preload at operating temp', value: `${fmt(result.thermalResult.preloadN, 0)} N` },
+                { label: 'Preload change (ΔF)', value: `${result.thermalResult.deltaForceN >= 0 ? '+' : ''}${fmtU(result.thermalResult.deltaForceN, unitSystem, UNIT_FORCE, 0)} ${unitLabel(unitSystem, UNIT_FORCE)}` },
+                { label: 'Preload at operating temp', value: `${fmtU(result.thermalResult.preloadN, unitSystem, UNIT_FORCE, 0)} ${unitLabel(unitSystem, UNIT_FORCE)}` },
                 { label: 'Bolt SF at operating temp', value: fmt(result.thermalResult.boltStressSafetyFactor, 2) },
                 { label: 'Passes at operating temp', value: result.thermalResult.overallPass ? 'Yes' : 'No' },
               ],
@@ -657,7 +681,7 @@ export default function BoltedJointCalculator() {
           ]
         : []),
     ],
-    [result, assemblyTempC, operatingTempC]
+    [result, assemblyTempC, operatingTempC, unitSystem]
   );
 
   const handleExportPdf = () => {
@@ -730,7 +754,7 @@ export default function BoltedJointCalculator() {
                     ))}
                   </optgroup>
                 </select>
-                <span className="hint">Pitch diameter dm = {fmt(size.pitchDiameterMm, 3)} mm (used in the torque-preload formula).</span>
+                <span className="hint">Pitch diameter dm = {fmtU(size.pitchDiameterMm, unitSystem, UNIT_LENGTH, 3)} {unitLabel(unitSystem, UNIT_LENGTH)} (used in the torque-preload formula).</span>
               </div>
               <div className="field">
                 <label>Head type</label>
@@ -755,12 +779,12 @@ export default function BoltedJointCalculator() {
               {propertyClassId === 'custom' && (
                 <div className="grid grid-2" style={{ gridColumn: '1 / -1' }}>
                   <div className="field">
-                    <label>Custom tensile strength (MPa)</label>
-                    <input autoComplete="off" type="number" min={1} value={customTensileMPa} onChange={(e) => setCustomTensileMPa(Number(e.target.value))} />
+                    <label>Custom tensile strength ({unitLabel(unitSystem, UNIT_STRESS)})</label>
+                    <input autoComplete="off" type="number" min={0.01} value={toDisplay(customTensileMPa, unitSystem, UNIT_STRESS)} onChange={(e) => setCustomTensileMPa(fromDisplay(Number(e.target.value), unitSystem, UNIT_STRESS))} />
                   </div>
                   <div className="field">
-                    <label>Custom proof strength (MPa)</label>
-                    <input autoComplete="off" type="number" min={1} value={customProofMPa} onChange={(e) => setCustomProofMPa(Number(e.target.value))} />
+                    <label>Custom proof strength ({unitLabel(unitSystem, UNIT_STRESS)})</label>
+                    <input autoComplete="off" type="number" min={0.01} value={toDisplay(customProofMPa, unitSystem, UNIT_STRESS)} onChange={(e) => setCustomProofMPa(fromDisplay(Number(e.target.value), unitSystem, UNIT_STRESS))} />
                   </div>
                 </div>
               )}
@@ -774,7 +798,7 @@ export default function BoltedJointCalculator() {
                   <button className={holeFit === 'medium' ? 'active' : ''} onClick={() => setHoleFit('medium')}>Medium</button>
                   <button className={holeFit === 'free' ? 'active' : ''} onClick={() => setHoleFit('free')}>Free</button>
                 </div>
-                <span className="hint">Suggested hole Ø for {size.label}: {fmt(suggestedHoleMm, 2)} mm. Use the "Use suggested" button on each clamped section below to apply it.</span>
+                <span className="hint">Suggested hole Ø for {size.label}: {fmtU(suggestedHoleMm, unitSystem, UNIT_LENGTH, 3)} {unitLabel(unitSystem, UNIT_LENGTH)}. Use the "Use suggested" button on each clamped section below to apply it.</span>
               </div>
             </div>
           </div>
@@ -803,29 +827,29 @@ export default function BoltedJointCalculator() {
                     </select>
                   </div>
                   <div className="field">
-                    <label>Thickness (mm)</label>
-                    <input autoComplete="off" type="number" min={0.1} value={s.thicknessMm} onChange={(e) => updateSection(s.id, { thicknessMm: Number(e.target.value) })} />
+                    <label>Thickness ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                    <input autoComplete="off" type="number" min={0.001} value={toDisplay(s.thicknessMm, unitSystem, UNIT_LENGTH)} onChange={(e) => updateSection(s.id, { thicknessMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                   </div>
                   <div className="field">
-                    <label>Hole Ø (mm)</label>
-                    <input autoComplete="off" type="number" min={0.1} value={s.holeDiameterMm} onChange={(e) => updateSection(s.id, { holeDiameterMm: Number(e.target.value) })} />
+                    <label>Hole Ø ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                    <input autoComplete="off" type="number" min={0.001} value={toDisplay(s.holeDiameterMm, unitSystem, UNIT_LENGTH)} onChange={(e) => updateSection(s.id, { holeDiameterMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                     <button className="btn small" style={{ marginTop: '0.3rem' }} onClick={() => updateSection(s.id, { holeDiameterMm: suggestedHoleMm })}>
-                      Use suggested ({fmt(suggestedHoleMm, 2)})
+                      Use suggested ({fmtU(suggestedHoleMm, unitSystem, UNIT_LENGTH, 3)})
                     </button>
                   </div>
                   <div className="field">
-                    <label>Outer Ø (mm)</label>
-                    <input autoComplete="off" type="number" min={0.1} value={s.outerDiameterMm} onChange={(e) => updateSection(s.id, { outerDiameterMm: Number(e.target.value) })} />
+                    <label>Outer Ø ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                    <input autoComplete="off" type="number" min={0.001} value={toDisplay(s.outerDiameterMm, unitSystem, UNIT_LENGTH)} onChange={(e) => updateSection(s.id, { outerDiameterMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                   </div>
                   {(advancedMode || s.materialId === 'custom') && (
                     <>
                       <div className="field">
-                        <label>E (GPa){advancedMode && s.materialId !== 'custom' ? ' — override' : ''}</label>
-                        <input autoComplete="off" type="number" min={0.1} value={s.customE ?? materialOf(s.materialId).elasticModulusGPa} onChange={(e) => updateSection(s.id, { customE: Number(e.target.value) })} />
+                        <label>E ({unitLabel(unitSystem, UNIT_MODULUS)}){advancedMode && s.materialId !== 'custom' ? ' — override' : ''}</label>
+                        <input autoComplete="off" type="number" min={0.001} value={toDisplay(s.customE ?? materialOf(s.materialId).elasticModulusGPa, unitSystem, UNIT_MODULUS)} onChange={(e) => updateSection(s.id, { customE: fromDisplay(Number(e.target.value), unitSystem, UNIT_MODULUS) })} />
                       </div>
                       <div className="field">
-                        <label>Yield (MPa){advancedMode && s.materialId !== 'custom' ? ' — override' : ''}</label>
-                        <input autoComplete="off" type="number" min={1} value={s.customYield ?? materialOf(s.materialId).yieldStrengthMPa} onChange={(e) => updateSection(s.id, { customYield: Number(e.target.value) })} />
+                        <label>Yield ({unitLabel(unitSystem, UNIT_STRESS)}){advancedMode && s.materialId !== 'custom' ? ' — override' : ''}</label>
+                        <input autoComplete="off" type="number" min={0.01} value={toDisplay(s.customYield ?? materialOf(s.materialId).yieldStrengthMPa, unitSystem, UNIT_STRESS)} onChange={(e) => updateSection(s.id, { customYield: fromDisplay(Number(e.target.value), unitSystem, UNIT_STRESS) })} />
                       </div>
                       {s.materialId === 'custom' && (
                         <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', color: 'var(--text-2)', fontWeight: 400, alignSelf: 'center' }}>
@@ -869,7 +893,7 @@ export default function BoltedJointCalculator() {
                     ))}
                   </select>
                 )}
-                {advancedMode && <WasherOverrideFields washer={underHeadWasher} override={headWasherOverride} onChange={(patch) => setHeadWasherOverride((prev) => ({ ...prev, ...patch }))} />}
+                {advancedMode && <WasherOverrideFields washer={underHeadWasher} override={headWasherOverride} onChange={(patch) => setHeadWasherOverride((prev) => ({ ...prev, ...patch }))} unitSystem={unitSystem} />}
               </div>
               <div className="field">
                 <label>Thread engagement</label>
@@ -897,12 +921,12 @@ export default function BoltedJointCalculator() {
                     )}
                     <span className="hint">
                       "All-metal prevailing torque" covers the K-nut / Aerotight / Aeronut / Philidas / Stover family (ISO 7042, DIN 980-V)
-                      {nut?.prevailingTorqueNm ? ` — prevailing torque ≈ ${fmt(nut.prevailingTorqueNm, 2)} N·m for this size/class.` : '.'}
+                      {nut?.prevailingTorqueNm ? ` — prevailing torque ≈ ${fmtU(nut.prevailingTorqueNm, unitSystem, UNIT_TORQUE, 2)} ${unitLabel(unitSystem, UNIT_TORQUE)} for this size/class.` : '.'}
                     </span>
                     {advancedMode && (nutType === 'nylonInsertLocknut' || nutType === 'allMetalPrevailingTorque') && (
                       <div className="field" style={{ marginTop: '0.4rem' }}>
-                        <label style={{ fontSize: '0.7rem' }}>Prevailing torque override (N·m)</label>
-                        <input autoComplete="off" type="number" min={0} placeholder={nut?.prevailingTorqueNm ? String(nut.prevailingTorqueNm) : ''} value={nutTorqueOverride} onChange={(e) => setNutTorqueOverride(e.target.value === '' ? '' : Number(e.target.value))} />
+                        <label style={{ fontSize: '0.7rem' }}>Prevailing torque override ({unitLabel(unitSystem, UNIT_TORQUE)})</label>
+                        <input autoComplete="off" type="number" min={0} placeholder={nut?.prevailingTorqueNm ? fmtU(nut.prevailingTorqueNm, unitSystem, UNIT_TORQUE, 2) : ''} value={nutTorqueOverride === '' ? '' : toDisplay(nutTorqueOverride, unitSystem, UNIT_TORQUE)} onChange={(e) => setNutTorqueOverride(e.target.value === '' ? '' : fromDisplay(Number(e.target.value), unitSystem, UNIT_TORQUE))} />
                       </div>
                     )}
                   </div>
@@ -921,7 +945,7 @@ export default function BoltedJointCalculator() {
                         ))}
                       </select>
                     )}
-                    {advancedMode && <WasherOverrideFields washer={underNutWasher} override={nutWasherOverride} onChange={(patch) => setNutWasherOverride((prev) => ({ ...prev, ...patch }))} />}
+                    {advancedMode && <WasherOverrideFields washer={underNutWasher} override={nutWasherOverride} onChange={(patch) => setNutWasherOverride((prev) => ({ ...prev, ...patch }))} unitSystem={unitSystem} />}
                   </div>
                 </>
               )}
@@ -940,12 +964,12 @@ export default function BoltedJointCalculator() {
                   </select>
                   <span className="hint">
                     Wire thread insert (HeliCoil/Recoil/Kato-style); screw-lock coils are conventionally dyed red per NAS1130/NASM21209
-                    {threadedInsertPreset?.prevailingTorqueNm ? ` — prevailing torque ≈ ${fmt(threadedInsertPreset.prevailingTorqueNm, 2)} N·m (representative, borrowed from the all-metal locknut table).` : '.'}
+                    {threadedInsertPreset?.prevailingTorqueNm ? ` — prevailing torque ≈ ${fmtU(threadedInsertPreset.prevailingTorqueNm, unitSystem, UNIT_TORQUE, 2)} ${unitLabel(unitSystem, UNIT_TORQUE)} (representative, borrowed from the all-metal locknut table).` : '.'}
                   </span>
                   {advancedMode && insertVariant === 'screwLock' && (
                     <div className="field" style={{ marginTop: '0.4rem' }}>
-                      <label style={{ fontSize: '0.7rem' }}>Prevailing torque override (N·m)</label>
-                      <input autoComplete="off" type="number" min={0} placeholder={threadedInsertPreset?.prevailingTorqueNm ? String(threadedInsertPreset.prevailingTorqueNm) : ''} value={insertTorqueOverride} onChange={(e) => setInsertTorqueOverride(e.target.value === '' ? '' : Number(e.target.value))} />
+                      <label style={{ fontSize: '0.7rem' }}>Prevailing torque override ({unitLabel(unitSystem, UNIT_TORQUE)})</label>
+                      <input autoComplete="off" type="number" min={0} placeholder={threadedInsertPreset?.prevailingTorqueNm ? fmtU(threadedInsertPreset.prevailingTorqueNm, unitSystem, UNIT_TORQUE, 2) : ''} value={insertTorqueOverride === '' ? '' : toDisplay(insertTorqueOverride, unitSystem, UNIT_TORQUE)} onChange={(e) => setInsertTorqueOverride(e.target.value === '' ? '' : fromDisplay(Number(e.target.value), unitSystem, UNIT_TORQUE))} />
                     </div>
                   )}
                 </div>
@@ -964,19 +988,19 @@ export default function BoltedJointCalculator() {
                   <div className="grid grid-2" style={{ marginTop: '0.5rem' }}>
                     {engagementInputMode === 'direct' ? (
                       <div className="field">
-                        <label>Engagement length (mm)</label>
-                        <input autoComplete="off" type="number" min={0.1} value={engagementLengthMm} onChange={(e) => setEngagementLengthMm(Number(e.target.value))} />
+                        <label>Engagement length ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                        <input autoComplete="off" type="number" min={0.001} value={toDisplay(engagementLengthMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setEngagementLengthMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
                       </div>
                     ) : (
                       <div className="field">
-                        <label>Bolt length (mm)</label>
-                        <input autoComplete="off" type="number" min={0.1} value={boltLengthMm} onChange={(e) => setBoltLengthMm(Number(e.target.value))} />
+                        <label>Bolt length ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                        <input autoComplete="off" type="number" min={0.001} value={toDisplay(boltLengthMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setBoltLengthMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
                         <span className="hint">Measured from the bearing face (under the head) to the tip — the usual "length" callout for a hex/socket head bolt.</span>
                       </div>
                     )}
                   </div>
                   <span className="hint" style={{ display: 'block', marginTop: '0.4rem' }}>
-                    Depth of thread engagement into the last clamped section ({threadEngagementMode === 'threadedInsert' ? 'via wire thread insert' : 'tapped directly into the material'}){engagementInputMode === 'boltLength' ? ` — derived: ${fmt(derivedEngagementLengthMm, 1)} mm (bolt length minus ${fmt(upperSectionsThicknessMm, 1)} mm ahead of the tapped section)` : '.'}
+                    Depth of thread engagement into the last clamped section ({threadEngagementMode === 'threadedInsert' ? 'via wire thread insert' : 'tapped directly into the material'}){engagementInputMode === 'boltLength' ? ` — derived: ${fmtU(derivedEngagementLengthMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)} (bolt length minus ${fmtU(upperSectionsThicknessMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)} ahead of the tapped section)` : '.'}
                   </span>
                 </div>
               )}
@@ -1061,16 +1085,16 @@ export default function BoltedJointCalculator() {
                 <input autoComplete="off" type="number" min={1} step={0.1} value={safetyFactorTarget} onChange={(e) => setSafetyFactorTarget(Number(e.target.value))} />
               </div>
               <div className="field">
-                <label>External axial load (N)</label>
-                <input autoComplete="off" type="number" min={0} value={externalAxialLoadN} onChange={(e) => setExternalAxialLoadN(Number(e.target.value))} />
+                <label>External axial load ({unitLabel(unitSystem, UNIT_FORCE)})</label>
+                <input autoComplete="off" type="number" min={0} value={toDisplay(externalAxialLoadN, unitSystem, UNIT_FORCE)} onChange={(e) => setExternalAxialLoadN(fromDisplay(Number(e.target.value), unitSystem, UNIT_FORCE))} />
                 <span className="hint">Applied tensile load the joint must resist without separating (0 = static preload-only check).</span>
               </div>
               <div className="field">
                 <label>
-                  External shear force (N)
+                  External shear force ({unitLabel(unitSystem, UNIT_FORCE)})
                   <InfoTooltip>A transverse load carried by the bolt shank/hole-wall bearing rather than by axial clamping — drives the shear stress, von Mises stress, and pin-bearing checks below (0 = no transverse load).</InfoTooltip>
                 </label>
-                <input autoComplete="off" type="number" min={0} value={externalShearForceN} onChange={(e) => setExternalShearForceN(Number(e.target.value))} />
+                <input autoComplete="off" type="number" min={0} value={toDisplay(externalShearForceN, unitSystem, UNIT_FORCE)} onChange={(e) => setExternalShearForceN(fromDisplay(Number(e.target.value), unitSystem, UNIT_FORCE))} />
               </div>
             </div>
           </div>
@@ -1085,30 +1109,41 @@ export default function BoltedJointCalculator() {
             <div className="field" style={{ marginBottom: '0.85rem' }}>
               <div className="segmented">
                 <button className={mode === 'torqueToPreload' ? 'active' : ''} onClick={() => setMode('torqueToPreload')}>Preload from torque</button>
-                <button className={mode === 'preloadToTorque' ? 'active' : ''} onClick={() => setMode('preloadToTorque')}>Torque from preload</button>
+                <button className={mode === 'preloadToTorque' && preloadEntryMode === 'absolute' ? 'active' : ''} onClick={() => { setMode('preloadToTorque'); setPreloadEntryMode('absolute'); }}>Torque from preload</button>
+                <button className={mode === 'preloadToTorque' && preloadEntryMode === 'percentYield' ? 'active' : ''} onClick={() => { setMode('preloadToTorque'); setPreloadEntryMode('percentYield'); }}>% of bolt yield</button>
                 <button className={mode === 'torqueAndAngle' ? 'active' : ''} onClick={() => setMode('torqueAndAngle')}>Torque + angle</button>
               </div>
             </div>
             {mode === 'torqueToPreload' && (
               <div className="field">
-                <label>Applied torque (N·m)</label>
-                <input autoComplete="off" type="number" min={0.01} step={0.1} value={targetTorqueNm} onChange={(e) => setTargetTorqueNm(Number(e.target.value))} />
+                <label>Applied torque ({unitLabel(unitSystem, UNIT_TORQUE)})</label>
+                <input autoComplete="off" type="number" min={0.001} step={0.1} value={toDisplay(targetTorqueNm, unitSystem, UNIT_TORQUE)} onChange={(e) => setTargetTorqueNm(fromDisplay(Number(e.target.value), unitSystem, UNIT_TORQUE))} />
               </div>
             )}
-            {mode === 'preloadToTorque' && (
+            {mode === 'preloadToTorque' && preloadEntryMode === 'absolute' && (
               <div className="field">
-                <label>Target preload (N)</label>
-                <input autoComplete="off" type="number" min={1} value={targetPreloadN} onChange={(e) => setTargetPreloadN(Number(e.target.value))} />
+                <label>Target preload ({unitLabel(unitSystem, UNIT_FORCE)})</label>
+                <input autoComplete="off" type="number" min={0.01} value={toDisplay(targetPreloadN, unitSystem, UNIT_FORCE)} onChange={(e) => setTargetPreloadN(fromDisplay(Number(e.target.value), unitSystem, UNIT_FORCE))} />
+              </div>
+            )}
+            {mode === 'preloadToTorque' && preloadEntryMode === 'percentYield' && (
+              <div className="field">
+                <label>
+                  % of bolt yield (proof strength)
+                  <InfoTooltip>Targets the preload as a percentage of the bolt's proof strength (the practical elastic-limit figure used throughout this tool) rather than an absolute force. 70-75% is a common rule-of-thumb target for removable/re-usable fastener joints, leaving margin for the preload scatter band above it without approaching yield.</InfoTooltip>
+                </label>
+                <input autoComplete="off" type="number" min={1} max={100} step={1} value={percentOfYield} onChange={(e) => setPercentOfYield(Number(e.target.value))} />
+                <span className="hint">= {fmtU(derivedPreloadFromPercentN, unitSystem, UNIT_FORCE, 0)} {unitLabel(unitSystem, UNIT_FORCE)} (proof {fmtU(propertyClass.proofStrengthMPa, unitSystem, UNIT_STRESS, 0)} {unitLabel(unitSystem, UNIT_STRESS)} × As {fmtU(size.tensileStressAreaMm2, unitSystem, UNIT_AREA, 3)} {unitLabel(unitSystem, UNIT_AREA)})</span>
               </div>
             )}
             {mode === 'torqueAndAngle' && (
               <div className="grid grid-2">
                 <div className="field">
                   <label>
-                    Snug torque (N·m)
+                    Snug torque ({unitLabel(unitSystem, UNIT_TORQUE)})
                     <InfoTooltip>A light torque used just to pull the joint together and remove gaps between parts — not the final tightening torque. Typically well under the final target.</InfoTooltip>
                   </label>
-                  <input autoComplete="off" type="number" min={0} step={0.1} value={snugTorqueNm} onChange={(e) => setSnugTorqueNm(Number(e.target.value))} />
+                  <input autoComplete="off" type="number" min={0} step={0.1} value={toDisplay(snugTorqueNm, unitSystem, UNIT_TORQUE)} onChange={(e) => setSnugTorqueNm(fromDisplay(Number(e.target.value), unitSystem, UNIT_TORQUE))} />
                 </div>
                 <div className="field">
                   <label>
@@ -1117,7 +1152,7 @@ export default function BoltedJointCalculator() {
                   </label>
                   <input autoComplete="off" type="number" min={0} step={5} value={additionalAngleDeg} onChange={(e) => setAdditionalAngleDeg(Number(e.target.value))} />
                 </div>
-                <span className="hint" style={{ gridColumn: '1 / -1' }}>Example: {fmt(snugTorqueNm, 1)} N·m snug torque, then an additional {fmt(additionalAngleDeg, 0)}° rotation.</span>
+                <span className="hint" style={{ gridColumn: '1 / -1' }}>Example: {fmtU(snugTorqueNm, unitSystem, UNIT_TORQUE, 1)} {unitLabel(unitSystem, UNIT_TORQUE)} snug torque, then an additional {fmt(additionalAngleDeg, 0)}° rotation.</span>
               </div>
             )}
           </div>
@@ -1137,17 +1172,17 @@ export default function BoltedJointCalculator() {
               {includeThermalEffects && (
                 <div className="grid grid-2">
                   <div className="field">
-                    <label>Assembly temperature (°C)</label>
-                    <input autoComplete="off" type="number" value={assemblyTempC} onChange={(e) => setAssemblyTempC(Number(e.target.value))} />
+                    <label>Assembly temperature ({unitLabel(unitSystem, UNIT_TEMP)})</label>
+                    <input autoComplete="off" type="number" value={toDisplay(assemblyTempC, unitSystem, UNIT_TEMP)} onChange={(e) => setAssemblyTempC(fromDisplay(Number(e.target.value), unitSystem, UNIT_TEMP))} />
                   </div>
                   <div className="field">
-                    <label>Operating temperature (°C)</label>
-                    <input autoComplete="off" type="number" value={operatingTempC} onChange={(e) => setOperatingTempC(Number(e.target.value))} />
+                    <label>Operating temperature ({unitLabel(unitSystem, UNIT_TEMP)})</label>
+                    <input autoComplete="off" type="number" value={toDisplay(operatingTempC, unitSystem, UNIT_TEMP)} onChange={(e) => setOperatingTempC(fromDisplay(Number(e.target.value), unitSystem, UNIT_TEMP))} />
                   </div>
                   <div className="field" style={{ gridColumn: '1 / -1' }}>
-                    <label>Bolt CTE override (×10⁻⁶/°C)</label>
-                    <input autoComplete="off" type="number" min={0.1} step={0.1} value={boltCteOverridePerC} onChange={(e) => setBoltCteOverridePerC(Number(e.target.value))} />
-                    <span className="hint">Default 12.0 (typical steel fastener) — override if the bolt is a different material.</span>
+                    <label>Bolt CTE override ({unitLabel(unitSystem, UNIT_CTE)})</label>
+                    <input autoComplete="off" type="number" min={0.001} step={0.1} value={toDisplay(boltCteOverridePerC, unitSystem, UNIT_CTE)} onChange={(e) => setBoltCteOverridePerC(fromDisplay(Number(e.target.value), unitSystem, UNIT_CTE))} />
+                    <span className="hint">Default {fmtU(12.0, unitSystem, UNIT_CTE, 2)} (typical steel fastener) — override if the bolt is a different material.</span>
                   </div>
                 </div>
               )}
@@ -1182,7 +1217,7 @@ export default function BoltedJointCalculator() {
                   Preload
                   <InfoTooltip>The clamping tension already "built into" the joint before any external load is applied — this is what actually holds the parts together. Too low and the joint can loosen or separate under load; too high and you risk yielding or breaking the bolt.</InfoTooltip>
                 </div>
-                <div className="value">{fmt(result.preloadN, 0)}<span className="unit">N</span></div>
+                <div className="value">{fmtU(result.preloadN, unitSystem, UNIT_FORCE, 0)}<span className="unit">{unitLabel(unitSystem, UNIT_FORCE)}</span></div>
                 <div className="hint">{fmt(result.preloadPercentOfProof, 0)}% of proof load</div>
               </div>
               <div className="result-tile">
@@ -1190,7 +1225,7 @@ export default function BoltedJointCalculator() {
                   Torque
                   <InfoTooltip>The twisting effort applied at the wrench. Most of it (often 80-90%) is consumed by friction under the head/nut and in the threads — only a fraction actually stretches the bolt into preload, which is why friction assumptions matter so much.</InfoTooltip>
                 </div>
-                <div className="value">{fmt(result.torqueNm, 2)}<span className="unit">N·m</span></div>
+                <div className="value">{fmtU(result.torqueNm, unitSystem, UNIT_TORQUE, 2)}<span className="unit">{unitLabel(unitSystem, UNIT_TORQUE)}</span></div>
                 <div className="hint">K-factor ≈ {fmt(result.simplifiedKFactor, 3)}</div>
               </div>
               <div className="result-tile">
@@ -1198,7 +1233,7 @@ export default function BoltedJointCalculator() {
                   Yield-onset ("breakoff") torque
                   <InfoTooltip>The torque level that would just bring the bolt to its proof strength (before any external load), computed the same way real yield-controlled/gradient tightening tools work. Treat this as a safe ceiling — going past it starts to permanently stretch (and eventually break) the bolt.</InfoTooltip>
                 </div>
-                <div className="value">{fmt(result.yieldOnsetTorqueNm, 2)}<span className="unit">N·m</span></div>
+                <div className="value">{fmtU(result.yieldOnsetTorqueNm, unitSystem, UNIT_TORQUE, 2)}<span className="unit">{unitLabel(unitSystem, UNIT_TORQUE)}</span></div>
                 {mode === 'torqueAndAngle' && result.yieldOnsetAngleDegFromSnug !== null && (
                   <div className="hint">≈ {fmt(result.yieldOnsetAngleDegFromSnug, 0)}° additional rotation from your snug torque</div>
                 )}
@@ -1208,7 +1243,7 @@ export default function BoltedJointCalculator() {
                   Preload scatter band
                   <InfoTooltip>Even with a fixed target torque, the ACTUAL preload varies assembly to assembly because friction is never perfectly repeatable. This band shows the realistic range for your chosen tightening method — a good design should still pass its checks even at the low end, and not overstress the bolt at the high end.</InfoTooltip>
                 </div>
-                <div className="value" style={{ fontSize: '1.2rem' }}>{fmt(result.preloadScatterBand.minN, 0)}–{fmt(result.preloadScatterBand.maxN, 0)}<span className="unit">N</span></div>
+                <div className="value" style={{ fontSize: '1.2rem' }}>{fmtU(result.preloadScatterBand.minN, unitSystem, UNIT_FORCE, 0)}–{fmtU(result.preloadScatterBand.maxN, unitSystem, UNIT_FORCE, 0)}<span className="unit">{unitLabel(unitSystem, UNIT_FORCE)}</span></div>
               </div>
               <div className="result-tile">
                 <div className="label">
@@ -1216,7 +1251,7 @@ export default function BoltedJointCalculator() {
                   <InfoTooltip>How much margin the bolt itself has against reaching its proof strength (the point it starts to permanently stretch) once external load is added to the preload. Below 1.0 means the bolt has already exceeded proof strength — this must be fixed.</InfoTooltip>
                 </div>
                 <div className={`value ${result.boltStressPass ? 'pos' : 'neg'}`}>{fmt(result.boltStressSafetyFactor, 2)}</div>
-                <div className="hint">σ = {fmt(result.boltTensileStressMPa, 1)} MPa</div>
+                <div className="hint">σ = {fmtU(result.boltTensileStressMPa, unitSystem, UNIT_STRESS, 1)} {unitLabel(unitSystem, UNIT_STRESS)}</div>
               </div>
               <div className="result-tile">
                 <div className="label">
@@ -1234,7 +1269,7 @@ export default function BoltedJointCalculator() {
                   Joint separation margin
                   <InfoTooltip>How much clamping force is left squeezing the parts together once the external load is applied. If this drops to zero or below, the parts can lift apart at the joint interface — even if the bolt itself is nowhere near failing. Bigger positive numbers are safer against separation, leakage, or fretting.</InfoTooltip>
                 </div>
-                <div className={`value ${result.jointSeparates ? 'neg' : 'pos'}`}>{fmt(result.jointSeparationMarginN, 0)}<span className="unit">N</span></div>
+                <div className={`value ${result.jointSeparates ? 'neg' : 'pos'}`}>{fmtU(result.jointSeparationMarginN, unitSystem, UNIT_FORCE, 0)}<span className="unit">{unitLabel(unitSystem, UNIT_FORCE)}</span></div>
               </div>
               {result.threadShearCheck && (
                 <div className="result-tile">
@@ -1242,8 +1277,8 @@ export default function BoltedJointCalculator() {
                     Thread engagement
                     <InfoTooltip>How deep the bolt threads into a tapped hole or insert. Too shallow and the threads can strip before the bolt reaches its full strength — "min" is the depth needed to make the engaged threads at least as strong as the bolt.</InfoTooltip>
                   </div>
-                  <div className={`value ${result.threadShearCheck.pass ? 'pos' : 'neg'}`}>{fmt(result.threadShearCheck.providedEngagementMm, 1)}<span className="unit">mm</span></div>
-                  <div className="hint">min {fmt(result.threadShearCheck.requiredEngagementMm, 1)} mm</div>
+                  <div className={`value ${result.threadShearCheck.pass ? 'pos' : 'neg'}`}>{fmtU(result.threadShearCheck.providedEngagementMm, unitSystem, UNIT_LENGTH, 3)}<span className="unit">{unitLabel(unitSystem, UNIT_LENGTH)}</span></div>
+                  <div className="hint">min {fmtU(result.threadShearCheck.requiredEngagementMm, unitSystem, UNIT_LENGTH, 3)} {unitLabel(unitSystem, UNIT_LENGTH)}</div>
                 </div>
               )}
             </div>
@@ -1263,13 +1298,13 @@ export default function BoltedJointCalculator() {
               <div className="result-grid">
                 <div className="result-tile">
                   <div className="label">Preload change (ΔF)</div>
-                  <div className={`value ${result.thermalResult.deltaForceN >= 0 ? 'pos' : 'warn'}`}>{result.thermalResult.deltaForceN >= 0 ? '+' : ''}{fmt(result.thermalResult.deltaForceN, 0)}<span className="unit">N</span></div>
+                  <div className={`value ${result.thermalResult.deltaForceN >= 0 ? 'pos' : 'warn'}`}>{result.thermalResult.deltaForceN >= 0 ? '+' : ''}{fmtU(result.thermalResult.deltaForceN, unitSystem, UNIT_FORCE, 0)}<span className="unit">{unitLabel(unitSystem, UNIT_FORCE)}</span></div>
                   <div className="hint">{result.thermalResult.deltaForceN >= 0 ? 'heating tightens the joint' : 'heating loosens the joint'}</div>
                 </div>
                 <div className="result-tile">
                   <div className="label">Preload at operating temp</div>
-                  <div className="value">{fmt(result.thermalResult.preloadN, 0)}<span className="unit">N</span></div>
-                  <div className="hint">vs. {fmt(result.preloadN, 0)} N at assembly</div>
+                  <div className="value">{fmtU(result.thermalResult.preloadN, unitSystem, UNIT_FORCE, 0)}<span className="unit">{unitLabel(unitSystem, UNIT_FORCE)}</span></div>
+                  <div className="hint">vs. {fmtU(result.preloadN, unitSystem, UNIT_FORCE, 0)} {unitLabel(unitSystem, UNIT_FORCE)} at assembly</div>
                 </div>
                 <div className="result-tile">
                   <div className="label">Bolt SF at operating temp</div>
@@ -1295,13 +1330,13 @@ export default function BoltedJointCalculator() {
               <thead><tr><th>Metric</th><th>Nominal</th><th>Min</th><th>Max</th></tr></thead>
               <tbody>
                 <tr>
-                  <td>Separation margin (N)</td>
+                  <td>Separation Margin [{unitLabel(unitSystem, UNIT_FORCE)}]</td>
                   {(['nominal', 'min', 'max'] as const).map((k) => (
-                    <td key={k} className={result.stressTable[k].jointSeparates ? 'fail' : 'pass'}>{fmt(result.stressTable[k].jointSeparationMarginN, 0)}</td>
+                    <td key={k} className={result.stressTable[k].jointSeparates ? 'fail' : 'pass'}>{fmtU(result.stressTable[k].jointSeparationMarginN, unitSystem, UNIT_FORCE, 0)}</td>
                   ))}
                 </tr>
                 <tr>
-                  <td>Factor of safety</td>
+                  <td>- Safety Factor</td>
                   {(['nominal', 'min', 'max'] as const).map((k) => (
                     <td key={k} className={result.stressTable[k].jointSeparationSafetyFactor >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(result.stressTable[k].jointSeparationSafetyFactor, 2)}</td>
                   ))}
@@ -1315,31 +1350,32 @@ export default function BoltedJointCalculator() {
             <div className="card-title">
               <span>
                 Bolt stresses
-                <InfoTooltip>Preload stress (clamping force alone), tensile stress (bolt force under the applied external load), shear stress (from the external shear force), and their von Mises combination — each at nominal preload and the min/max scatter band. Safety factor shown in brackets.</InfoTooltip>
+                <InfoTooltip>Preload stress (clamping force alone), tensile stress (bolt force under the applied external load), shear stress (from the external shear force), and their von Mises combination — each at nominal preload and the min/max scatter band, with the safety factor directly underneath.</InfoTooltip>
               </span>
             </div>
             <table className="data-table">
               <thead><tr><th>Stress</th><th>Nominal</th><th>Min</th><th>Max</th></tr></thead>
               <tbody>
                 {([
-                  ['Preload stress', 'preloadStressMPa', 'preloadStressSafetyFactor'],
-                  ['Tensile stress', 'tensileStressMPa', 'tensileStressSafetyFactor'],
-                  ['Shear stress', 'shearStressMPa', 'shearStressSafetyFactor'],
-                  ['Von Mises stress', 'vonMisesStressMPa', 'vonMisesSafetyFactor'],
-                ] as const).map(([label, stressKey, sfKey]) => (
-                  <tr key={label}>
-                    <td>{label}</td>
+                  ['Preload Stress', 'preloadStressMPa', 'preloadStressSafetyFactor'],
+                  ['Tensile Stress', 'tensileStressMPa', 'tensileStressSafetyFactor'],
+                  ['Shear Stress', 'shearStressMPa', 'shearStressSafetyFactor'],
+                  ['Von Mises Stress', 'vonMisesStressMPa', 'vonMisesSafetyFactor'],
+                ] as const).flatMap(([label, stressKey, sfKey]) => [
+                  <tr key={`${label}-stress`}>
+                    <td>{label} [{unitLabel(unitSystem, UNIT_STRESS)}]</td>
+                    {(['nominal', 'min', 'max'] as const).map((k) => (
+                      <td key={k}>{fmtU(result.stressTable[k][stressKey], unitSystem, UNIT_STRESS, 1)}</td>
+                    ))}
+                  </tr>,
+                  <tr key={`${label}-sf`}>
+                    <td>- Safety Factor</td>
                     {(['nominal', 'min', 'max'] as const).map((k) => {
-                      const s = result.stressTable[k];
-                      const sf = s[sfKey];
-                      return (
-                        <td key={k} className={sf >= safetyFactorTarget ? 'pass' : 'fail'}>
-                          {fmt(s[stressKey], 1)} MPa <span className="hint">(SF {fmt(sf, 2)})</span>
-                        </td>
-                      );
+                      const sf = result.stressTable[k][sfKey];
+                      return <td key={k} className={sf >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(sf, 2)}</td>;
                     })}
-                  </tr>
-                ))}
+                  </tr>,
+                ])}
               </tbody>
             </table>
             <span className="hint">Shear stress is independent of preload, so it (and the resulting von Mises value) only vary Nominal/Min/Max through their preload-driven tensile-stress component.</span>
@@ -1353,16 +1389,22 @@ export default function BoltedJointCalculator() {
               </span>
             </div>
             <table className="data-table">
-              <thead><tr><th>Thread</th><th>Shear stress</th><th>Safety factor</th></tr></thead>
+              <thead><tr><th>Metric</th><th>Value</th></tr></thead>
               <tbody>
                 <tr>
-                  <td>External (bolt)</td>
-                  <td>{fmt(result.threadStress.externalThreadStressMPa, 1)} MPa</td>
+                  <td>External (Bolt) Thread [{unitLabel(unitSystem, UNIT_STRESS)}]</td>
+                  <td>{fmtU(result.threadStress.externalThreadStressMPa, unitSystem, UNIT_STRESS, 1)}</td>
+                </tr>
+                <tr>
+                  <td>- Safety Factor</td>
                   <td className={result.threadStress.externalThreadSafetyFactor >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(result.threadStress.externalThreadSafetyFactor, 2)}</td>
                 </tr>
                 <tr>
-                  <td>Internal ({threadEngagementMode === 'nutAndBolt' ? 'nut' : threadEngagementMode === 'threadedInsert' ? 'insert/tapped' : 'tapped'})</td>
-                  <td>{fmt(result.threadStress.internalThreadStressMPa, 1)} MPa</td>
+                  <td>Internal Thread ({threadEngagementMode === 'nutAndBolt' ? 'nut' : threadEngagementMode === 'threadedInsert' ? 'insert/tapped' : 'tapped'}) [{unitLabel(unitSystem, UNIT_STRESS)}]</td>
+                  <td>{fmtU(result.threadStress.internalThreadStressMPa, unitSystem, UNIT_STRESS, 1)}</td>
+                </tr>
+                <tr>
+                  <td>- Safety Factor</td>
                   <td className={result.threadStress.internalThreadSafetyFactor >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(result.threadStress.internalThreadSafetyFactor, 2)}</td>
                 </tr>
               </tbody>
@@ -1378,26 +1420,38 @@ export default function BoltedJointCalculator() {
               </span>
             </div>
             <table className="data-table">
-              <thead><tr><th>Check</th><th>Stress</th><th>Safety factor</th></tr></thead>
+              <thead><tr><th>Metric</th><th>Value</th></tr></thead>
               <tbody>
                 <tr>
-                  <td>Pull-through stress</td>
-                  <td>{fmt(result.clampedPartsChecks.pullThroughStressMPa, 1)} MPa</td>
+                  <td>Pull-Through Stress [{unitLabel(unitSystem, UNIT_STRESS)}]</td>
+                  <td>{fmtU(result.clampedPartsChecks.pullThroughStressMPa, unitSystem, UNIT_STRESS, 1)}</td>
+                </tr>
+                <tr>
+                  <td>- Safety Factor</td>
                   <td className={result.clampedPartsChecks.pullThroughSafetyFactor >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(result.clampedPartsChecks.pullThroughSafetyFactor, 2)}</td>
                 </tr>
                 <tr>
-                  <td>Pin bearing</td>
-                  <td>{fmt(result.clampedPartsChecks.pinBearingStressMPa, 1)} MPa</td>
+                  <td>Pin Bearing [{unitLabel(unitSystem, UNIT_STRESS)}]</td>
+                  <td>{fmtU(result.clampedPartsChecks.pinBearingStressMPa, unitSystem, UNIT_STRESS, 1)}</td>
+                </tr>
+                <tr>
+                  <td>- Safety Factor</td>
                   <td className={result.clampedPartsChecks.pinBearingSafetyFactor >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(result.clampedPartsChecks.pinBearingSafetyFactor, 2)}</td>
                 </tr>
                 <tr>
-                  <td>Bearing — top (head side)</td>
-                  <td>{fmt(result.clampedPartsChecks.bearingTopStressMPa, 1)} MPa</td>
+                  <td>Bearing - Top (Head Side) [{unitLabel(unitSystem, UNIT_STRESS)}]</td>
+                  <td>{fmtU(result.clampedPartsChecks.bearingTopStressMPa, unitSystem, UNIT_STRESS, 1)}</td>
+                </tr>
+                <tr>
+                  <td>- Safety Factor</td>
                   <td className={result.clampedPartsChecks.bearingTopSafetyFactor >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(result.clampedPartsChecks.bearingTopSafetyFactor, 2)}</td>
                 </tr>
                 <tr>
-                  <td>Bearing — bottom (nut/tapped side)</td>
-                  <td>{fmt(result.clampedPartsChecks.bearingBottomStressMPa, 1)} MPa</td>
+                  <td>Bearing - Bottom (Nut/Tapped Side) [{unitLabel(unitSystem, UNIT_STRESS)}]</td>
+                  <td>{fmtU(result.clampedPartsChecks.bearingBottomStressMPa, unitSystem, UNIT_STRESS, 1)}</td>
+                </tr>
+                <tr>
+                  <td>- Safety Factor</td>
                   <td className={result.clampedPartsChecks.bearingBottomSafetyFactor >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(result.clampedPartsChecks.bearingBottomSafetyFactor, 2)}</td>
                 </tr>
               </tbody>
@@ -1418,6 +1472,7 @@ export default function BoltedJointCalculator() {
               geometryValidity={result.geometryValidity}
               threadEngagementMode={threadEngagementMode}
               engagementLengthMm={threadEngagementMode !== 'nutAndBolt' ? effectiveEngagementLengthMm : undefined}
+              unitSystem={unitSystem}
             />
           </div>
 

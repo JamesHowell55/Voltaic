@@ -1,5 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useTheme } from '../lib/ThemeContext';
+import { useUnitSystem } from '../lib/UnitSystemContext';
+import { toDisplay, fromDisplay, unitLabel, UNIT_LENGTH, UNIT_AREA } from '../lib/globalUnits';
 import { exportReportToPdf, type ReportSection, type CalcStepData } from '../lib/pdfExport';
 import { useBranding } from '../lib/useBranding';
 import { useSavedCalculations } from '../lib/useSavedCalculations';
@@ -36,12 +38,17 @@ function fmt(n: number, digits = 2): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: 0 });
 }
 
+function fmtU(valueSI: number, unitSystem: ReturnType<typeof useUnitSystem>['unitSystem'], def: Parameters<typeof toDisplay>[2], digits = 2): string {
+  return fmt(toDisplay(valueSI, unitSystem, def), digits);
+}
+
 type ChokeMode = 'cm' | 'dm';
 type TurnsConfig = 'passthrough' | 'wound';
 
 export default function ChokeSizingCalculator() {
   const { accentHex } = useTheme();
   const branding = useBranding();
+  const { unitSystem } = useUnitSystem();
 
   const [chokeMode, setChokeMode] = useState<ChokeMode>('dm');
 
@@ -293,9 +300,9 @@ export default function ChokeSizingCalculator() {
       heading: 'Core geometry',
       rows: [
         { label: 'Profile', value: profileLabel },
-        { label: 'Effective area (Ae)', value: `${fmt(geometry.effectiveAreaMm2, 2)} mm²` },
-        { label: 'Path length (le)', value: `${fmt(geometry.pathLengthMm, 2)} mm` },
-        { label: 'Window area (Wa)', value: `${fmt(geometry.windowAreaMm2, 1)} mm²` },
+        { label: 'Effective area (Ae)', value: `${fmtU(geometry.effectiveAreaMm2, unitSystem, UNIT_AREA, 3)} ${unitLabel(unitSystem, UNIT_AREA)}` },
+        { label: 'Path length (le)', value: `${fmtU(geometry.pathLengthMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` },
+        { label: 'Window area (Wa)', value: `${fmtU(geometry.windowAreaMm2, unitSystem, UNIT_AREA, 3)} ${unitLabel(unitSystem, UNIT_AREA)}` },
       ],
     },
     {
@@ -335,7 +342,7 @@ export default function ChokeSizingCalculator() {
           { label: 'Worst-case imbalance current', value: `${fmt(imbalanceCurrentA, 2)} A` },
         ],
     },
-  ], [profileLabel, geometry, materialLabel, mur, bSat, saturationMarginPercent, turnsConfig, effectiveTurns, phaseCount, isDm, vDc, dcCurrentA, targetRippleA, switchingFreqHz, dutyCycle, motorSpeedRpm, motorPolePairs, cisprClassId, referenceFreqHz, targetImpedanceOhm, imbalanceCurrentA]);
+  ], [profileLabel, geometry, materialLabel, mur, bSat, saturationMarginPercent, turnsConfig, effectiveTurns, phaseCount, isDm, vDc, dcCurrentA, targetRippleA, switchingFreqHz, dutyCycle, motorSpeedRpm, motorPolePairs, cisprClassId, referenceFreqHz, targetImpedanceOhm, imbalanceCurrentA, unitSystem]);
 
   const outputSections: ReportSection[] = useMemo(() => [
     {
@@ -426,76 +433,76 @@ export default function ChokeSizingCalculator() {
             {dims.profile === 'toroidal' && (
               <div className="grid grid-3" style={{ marginTop: '0.75rem' }}>
                 <div className="field">
-                  <label>Outer diameter (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.outerDiameterMm} onChange={(e) => setDims({ ...dims, outerDiameterMm: Number(e.target.value) })} />
+                  <label>Outer diameter ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.outerDiameterMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, outerDiameterMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
                 <div className="field">
-                  <label>Inner diameter (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.innerDiameterMm} onChange={(e) => setDims({ ...dims, innerDiameterMm: Number(e.target.value) })} />
+                  <label>Inner diameter ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.innerDiameterMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, innerDiameterMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
                 <div className="field">
-                  <label>Height / stack (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.heightMm} onChange={(e) => setDims({ ...dims, heightMm: Number(e.target.value) })} />
+                  <label>Height / stack ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.heightMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, heightMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
               </div>
             )}
             {dims.profile === 'oval' && (
               <div className="grid grid-2" style={{ marginTop: '0.75rem' }}>
                 <div className="field">
-                  <label>Straight section length (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.straightLengthMm} onChange={(e) => setDims({ ...dims, straightLengthMm: Number(e.target.value) })} />
+                  <label>Straight section length ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.straightLengthMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, straightLengthMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
                 <div className="field">
-                  <label>Height / stack (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.heightMm} onChange={(e) => setDims({ ...dims, heightMm: Number(e.target.value) })} />
+                  <label>Height / stack ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.heightMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, heightMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
                 <div className="field">
-                  <label>Inner radius (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.innerRadiusMm} onChange={(e) => setDims({ ...dims, innerRadiusMm: Number(e.target.value) })} />
+                  <label>Inner radius ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.innerRadiusMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, innerRadiusMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
                 <div className="field">
-                  <label>Outer radius (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.outerRadiusMm} onChange={(e) => setDims({ ...dims, outerRadiusMm: Number(e.target.value) })} />
+                  <label>Outer radius ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.outerRadiusMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, outerRadiusMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
               </div>
             )}
             {dims.profile === 'ucore' && (
               <div className="grid grid-2" style={{ marginTop: '0.75rem' }}>
                 <div className="field">
-                  <label>Leg width (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.legWidthMm} onChange={(e) => setDims({ ...dims, legWidthMm: Number(e.target.value) })} />
+                  <label>Leg width ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.legWidthMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, legWidthMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
                 <div className="field">
-                  <label>Stack depth (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.stackDepthMm} onChange={(e) => setDims({ ...dims, stackDepthMm: Number(e.target.value) })} />
+                  <label>Stack depth ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.stackDepthMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, stackDepthMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
                 <div className="field">
-                  <label>Window height (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.windowHeightMm} onChange={(e) => setDims({ ...dims, windowHeightMm: Number(e.target.value) })} />
+                  <label>Window height ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.windowHeightMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, windowHeightMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
                 <div className="field">
-                  <label>Window width (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.windowWidthMm} onChange={(e) => setDims({ ...dims, windowWidthMm: Number(e.target.value) })} />
+                  <label>Window width ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.windowWidthMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, windowWidthMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
               </div>
             )}
             {dims.profile === 'ecore' && (
               <div className="grid grid-2" style={{ marginTop: '0.75rem' }}>
                 <div className="field">
-                  <label>Center leg width (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.centerLegWidthMm} onChange={(e) => setDims({ ...dims, centerLegWidthMm: Number(e.target.value) })} />
+                  <label>Center leg width ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.centerLegWidthMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, centerLegWidthMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
                 <div className="field">
-                  <label>Stack depth (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.stackDepthMm} onChange={(e) => setDims({ ...dims, stackDepthMm: Number(e.target.value) })} />
+                  <label>Stack depth ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.stackDepthMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, stackDepthMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
                 <div className="field">
-                  <label>Window height (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.windowHeightMm} onChange={(e) => setDims({ ...dims, windowHeightMm: Number(e.target.value) })} />
+                  <label>Window height ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.windowHeightMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, windowHeightMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
                 <div className="field">
-                  <label>Window width (mm)</label>
-                  <input autoComplete="off" type="number" min={0} value={dims.windowWidthMm} onChange={(e) => setDims({ ...dims, windowWidthMm: Number(e.target.value) })} />
+                  <label>Window width ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(dims.windowWidthMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setDims({ ...dims, windowWidthMm: fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH) })} />
                 </div>
               </div>
             )}
@@ -503,15 +510,15 @@ export default function ChokeSizingCalculator() {
             <div className="grid grid-3" style={{ marginTop: '0.75rem' }}>
               <div className="result-tile">
                 <div className="label">Ae</div>
-                <div className="value">{fmt(geometry.effectiveAreaMm2, 1)}<span className="unit">mm²</span></div>
+                <div className="value">{fmtU(geometry.effectiveAreaMm2, unitSystem, UNIT_AREA, 3)}<span className="unit">{unitLabel(unitSystem, UNIT_AREA)}</span></div>
               </div>
               <div className="result-tile">
                 <div className="label">le</div>
-                <div className="value">{fmt(geometry.pathLengthMm, 1)}<span className="unit">mm</span></div>
+                <div className="value">{fmtU(geometry.pathLengthMm, unitSystem, UNIT_LENGTH, 3)}<span className="unit">{unitLabel(unitSystem, UNIT_LENGTH)}</span></div>
               </div>
               <div className="result-tile">
                 <div className="label">Wa</div>
-                <div className="value">{fmt(geometry.windowAreaMm2, 0)}<span className="unit">mm²</span></div>
+                <div className="value">{fmtU(geometry.windowAreaMm2, unitSystem, UNIT_AREA, 3)}<span className="unit">{unitLabel(unitSystem, UNIT_AREA)}</span></div>
               </div>
             </div>
           </div>
@@ -581,19 +588,19 @@ export default function ChokeSizingCalculator() {
                     <span className="hint">Required for target: ≈ {fmt(requiredN, 2)} turns</span>
                   </div>
                   <div className="field">
-                    <label>Conductor cross-section (mm²)</label>
-                    <input autoComplete="off" type="number" min={0} step={0.1} value={conductorCrossSectionMm2} onChange={(e) => setConductorCrossSectionMm2(Number(e.target.value))} />
+                    <label>Conductor cross-section ({unitLabel(unitSystem, UNIT_AREA)})</label>
+                    <input autoComplete="off" type="number" min={0} step={0.001} value={toDisplay(conductorCrossSectionMm2, unitSystem, UNIT_AREA)} onChange={(e) => setConductorCrossSectionMm2(fromDisplay(Number(e.target.value), unitSystem, UNIT_AREA))} />
                   </div>
                 </>
               ) : (
                 <>
                   <div className="field">
-                    <label>Busbar width (mm)</label>
-                    <input autoComplete="off" type="number" min={0} value={busbarWidthMm} onChange={(e) => setBusbarWidthMm(Number(e.target.value))} />
+                    <label>Busbar width ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                    <input autoComplete="off" type="number" min={0} value={toDisplay(busbarWidthMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setBusbarWidthMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
                   </div>
                   <div className="field">
-                    <label>Busbar thickness (mm)</label>
-                    <input autoComplete="off" type="number" min={0} step={0.1} value={busbarThicknessMm} onChange={(e) => setBusbarThicknessMm(Number(e.target.value))} />
+                    <label>Busbar thickness ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                    <input autoComplete="off" type="number" min={0} step={0.001} value={toDisplay(busbarThicknessMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setBusbarThicknessMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
                   </div>
                 </>
               )}
