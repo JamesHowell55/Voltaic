@@ -132,6 +132,8 @@ export default function BoltedJointCalculator() {
   const [nutType, setNutType] = useState<NutType>('plainHex');
   const [nutPropertyClassBand, setNutPropertyClassBand] = useState<PropertyClassBand>('5-8');
   const [engagementLengthMm, setEngagementLengthMm] = useState(12);
+  const [engagementInputMode, setEngagementInputMode] = useState<'direct' | 'boltLength'>('direct');
+  const [boltLengthMm, setBoltLengthMm] = useState(22);
   const [insertVariant, setInsertVariant] = useState<InsertVariant>('freeRunning');
   const [insertLengthRatio, setInsertLengthRatio] = useState(1.5);
 
@@ -149,6 +151,7 @@ export default function BoltedJointCalculator() {
   const [tighteningMethodId, setTighteningMethodId] = useState('torqueWrench');
   const [scatterConvention, setScatterConvention] = useState<ScatterConvention>('nominalToMax');
   const [externalAxialLoadN, setExternalAxialLoadN] = useState(0);
+  const [externalShearForceN, setExternalShearForceN] = useState(0);
   const [safetyFactorTarget, setSafetyFactorTarget] = useState(1.5);
 
   const getInputs = useCallback((): Record<string, unknown> => ({
@@ -156,17 +159,17 @@ export default function BoltedJointCalculator() {
     sections: sections.map(s => ({ materialId: s.materialId, thicknessMm: s.thicknessMm, holeDiameterMm: s.holeDiameterMm, outerDiameterMm: s.outerDiameterMm, customIsPolymer: s.customIsPolymer })),
     headWasherType, headWasherSpecId, nutWasherType, nutWasherSpecId,
     includeSpringWasherCompliance, threadEngagementMode, nutType, nutPropertyClassBand,
-    engagementLengthMm, insertVariant, insertLengthRatio,
+    engagementLengthMm, engagementInputMode, boltLengthMm, insertVariant, insertLengthRatio,
     frictionPresetId, customThreadMu, useSeparateBearingFriction, bearingFrictionPresetId, customBearingMu,
     targetPreloadN, targetTorqueNm, snugTorqueNm, additionalAngleDeg,
-    tighteningMethodId, scatterConvention, externalAxialLoadN, safetyFactorTarget,
+    tighteningMethodId, scatterConvention, externalAxialLoadN, externalShearForceN, safetyFactorTarget,
   }), [mode, sizeId, headType, propertyClassId, customTensileMPa, customProofMPa, holeFit,
     sections, headWasherType, headWasherSpecId, nutWasherType, nutWasherSpecId,
     includeSpringWasherCompliance, threadEngagementMode, nutType, nutPropertyClassBand,
-    engagementLengthMm, insertVariant, insertLengthRatio,
+    engagementLengthMm, engagementInputMode, boltLengthMm, insertVariant, insertLengthRatio,
     frictionPresetId, customThreadMu, useSeparateBearingFriction, bearingFrictionPresetId, customBearingMu,
     targetPreloadN, targetTorqueNm, snugTorqueNm, additionalAngleDeg,
-    tighteningMethodId, scatterConvention, externalAxialLoadN, safetyFactorTarget]);
+    tighteningMethodId, scatterConvention, externalAxialLoadN, externalShearForceN, safetyFactorTarget]);
 
   const restoreInputs = useCallback((inp: Record<string, unknown>) => {
     const v = inp as Record<string, any>;
@@ -187,6 +190,8 @@ export default function BoltedJointCalculator() {
     if (v.nutType) setNutType(v.nutType);
     if (v.nutPropertyClassBand) setNutPropertyClassBand(v.nutPropertyClassBand);
     if (v.engagementLengthMm != null) setEngagementLengthMm(v.engagementLengthMm);
+    if (v.engagementInputMode) setEngagementInputMode(v.engagementInputMode);
+    if (v.boltLengthMm != null) setBoltLengthMm(v.boltLengthMm);
     if (v.insertVariant) setInsertVariant(v.insertVariant);
     if (v.insertLengthRatio != null) setInsertLengthRatio(v.insertLengthRatio);
     if (v.frictionPresetId) setFrictionPresetId(v.frictionPresetId);
@@ -201,6 +206,7 @@ export default function BoltedJointCalculator() {
     if (v.tighteningMethodId) setTighteningMethodId(v.tighteningMethodId);
     if (v.scatterConvention) setScatterConvention(v.scatterConvention);
     if (v.externalAxialLoadN != null) setExternalAxialLoadN(v.externalAxialLoadN);
+    if (v.externalShearForceN != null) setExternalShearForceN(v.externalShearForceN);
     if (v.safetyFactorTarget != null) setSafetyFactorTarget(v.safetyFactorTarget);
   }, []);
 
@@ -284,6 +290,17 @@ export default function BoltedJointCalculator() {
   const removeSection = (id: string) => setSections((prev) => (prev.length <= 1 ? prev : prev.filter((s) => s.id !== id)));
   const updateSection = (id: string, patch: Partial<SectionFormState>) => setSections((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
 
+  // Bolt-length input mode: rather than typing the thread engagement depth
+  // directly, the user can type the bolt's overall length (bearing face to tip)
+  // and have the engagement length derived as whatever's left after passing
+  // through every section ahead of the tapped/insert one.
+  const upperSectionsThicknessMm = useMemo(
+    () => (threadEngagementMode === 'nutAndBolt' ? 0 : sections.slice(0, -1).reduce((sum, s) => sum + s.thicknessMm, 0)),
+    [sections, threadEngagementMode]
+  );
+  const derivedEngagementLengthMm = Math.max(0, boltLengthMm - upperSectionsThicknessMm);
+  const effectiveEngagementLengthMm = engagementInputMode === 'boltLength' ? derivedEngagementLengthMm : engagementLengthMm;
+
   const jointInput: JointInput = useMemo(
     () => ({
       mode,
@@ -297,7 +314,7 @@ export default function BoltedJointCalculator() {
       threadEngagementMode,
       nut: effectiveNut,
       threadedInsert: threadEngagementMode === 'threadedInsert' ? effectiveThreadedInsert : null,
-      engagementLengthMm: threadEngagementMode === 'nutAndBolt' ? undefined : engagementLengthMm,
+      engagementLengthMm: threadEngagementMode === 'nutAndBolt' ? undefined : effectiveEngagementLengthMm,
       threadFrictionMu,
       bearingFrictionMu,
       targetPreloadN: mode === 'preloadToTorque' ? targetPreloadN : undefined,
@@ -307,13 +324,14 @@ export default function BoltedJointCalculator() {
       tighteningMethodAlphaAMax: tighteningMethod.alphaAMax,
       scatterConvention,
       externalAxialLoadN,
+      externalShearForceN,
       safetyFactorTarget,
       thermal: advancedMode && includeThermalEffects ? { assemblyTempC, operatingTempC, boltThermalExpansionPerC: boltCteOverridePerC * 1e-6 } : null,
     }),
     [
       mode, size, headType, propertyClass, sections, advancedMode, effectiveHeadWasher, effectiveNutWasher, includeSpringWasherCompliance,
-      threadEngagementMode, effectiveNut, effectiveThreadedInsert, engagementLengthMm, threadFrictionMu, bearingFrictionMu,
-      targetPreloadN, targetTorqueNm, snugTorqueNm, additionalAngleDeg, tighteningMethod, scatterConvention, externalAxialLoadN, safetyFactorTarget,
+      threadEngagementMode, effectiveNut, effectiveThreadedInsert, effectiveEngagementLengthMm, threadFrictionMu, bearingFrictionMu,
+      targetPreloadN, targetTorqueNm, snugTorqueNm, additionalAngleDeg, tighteningMethod, scatterConvention, externalAxialLoadN, externalShearForceN, safetyFactorTarget,
       includeThermalEffects, assemblyTempC, operatingTempC, boltCteOverridePerC,
     ]
   );
@@ -357,8 +375,10 @@ export default function BoltedJointCalculator() {
   }
   if (!result.geometryValidity.engagementLengthOk) {
     failureGuidance.push({
-      issue: `Thread engagement too short (${fmt(engagementLengthMm, 1)} mm provided, needs ≥ ${fmt(result.geometryValidity.minEngagementLengthMm, 1)} mm).`,
-      guidance: 'Increase the engagement length, use a stronger tapped material for the last section, or switch to a threaded insert (which can raise the effective thread strength).',
+      issue: `Thread engagement too short (${fmt(effectiveEngagementLengthMm, 1)} mm ${engagementInputMode === 'boltLength' ? 'derived from bolt length' : 'provided'}, needs ≥ ${fmt(result.geometryValidity.minEngagementLengthMm, 1)} mm).`,
+      guidance: engagementInputMode === 'boltLength'
+        ? 'Use a longer bolt, use a stronger tapped material for the last section, or switch to a threaded insert (which can raise the effective thread strength).'
+        : 'Increase the engagement length, use a stronger tapped material for the last section, or switch to a threaded insert (which can raise the effective thread strength).',
       severity: 'fail',
     });
   }
@@ -381,6 +401,34 @@ export default function BoltedJointCalculator() {
       issue: 'The compression cone grows wider than a clamped member\'s outer diameter at some point.',
       guidance: 'Not a hard failure — treat the stiffness result as approximate, or increase the clamped sections\' outer diameter for a tighter estimate.',
       severity: 'warn',
+    });
+  }
+  if (externalShearForceN > 0 && result.stressTable.nominal.vonMisesSafetyFactor < safetyFactorTarget) {
+    failureGuidance.push({
+      issue: `Combined (von Mises) stress safety factor ${fmt(result.stressTable.nominal.vonMisesSafetyFactor, 2)} is below the target (τ = ${fmt(result.stressTable.nominal.shearStressMPa, 1)} MPa from the external shear force).`,
+      guidance: 'Reduce the external shear force, use a larger bolt diameter, or add a dowel/shear pin so the bolt doesn\'t have to carry the transverse load alone.',
+      severity: 'fail',
+    });
+  }
+  if (result.threadStress.externalThreadSafetyFactor < safetyFactorTarget || result.threadStress.internalThreadSafetyFactor < safetyFactorTarget) {
+    failureGuidance.push({
+      issue: `Thread shear safety factor is below target (external ${fmt(result.threadStress.externalThreadSafetyFactor, 2)}, internal ${fmt(result.threadStress.internalThreadSafetyFactor, 2)}).`,
+      guidance: 'Increase the engagement length, use a stronger tapped/insert material, or step up to a larger bolt size.',
+      severity: 'fail',
+    });
+  }
+  if (result.clampedPartsChecks.pullThroughSafetyFactor < safetyFactorTarget) {
+    failureGuidance.push({
+      issue: `Pull-through safety factor ${fmt(result.clampedPartsChecks.pullThroughSafetyFactor, 2)} is below target — the head/washer may shear through the top clamped section.`,
+      guidance: 'Add a wider washer under the head, use a thicker or stronger top section, or reduce the preload/external axial load.',
+      severity: 'fail',
+    });
+  }
+  if (result.clampedPartsChecks.pinBearingSafetyFactor < safetyFactorTarget) {
+    failureGuidance.push({
+      issue: `Pin-bearing safety factor ${fmt(result.clampedPartsChecks.pinBearingSafetyFactor, 2)} is below target — the bolt shank may crush the clamped stack's hole wall under the shear load.`,
+      guidance: 'Reduce the external shear force, use a larger bolt diameter, add a dowel/shear pin, or use a stronger clamped material.',
+      severity: 'fail',
     });
   }
   if (result.thermalResult && !result.thermalResult.overallPass) {
@@ -454,6 +502,12 @@ export default function BoltedJointCalculator() {
         result: `σ = ${fmt(result.boltTensileStressMPa, 1)} MPa, SF = ${fmt(result.boltStressSafetyFactor, 2)} (target ${safetyFactorTarget}) — ${result.boltStressPass ? 'pass' : 'fail'}`,
       },
       {
+        title: 'Shear stress and combined (von Mises) stress',
+        formula: 'τ = V / A_shank, σ_vm = √(σ_tensile² + 3τ²), SF = proof / σ_vm',
+        substitution: `V = ${fmt(externalShearForceN, 0)} N, A_shank = π/4·d² = ${fmt((Math.PI / 4) * size.nominalDiameterMm * size.nominalDiameterMm, 1)} mm²`,
+        result: `τ = ${fmt(result.stressTable.nominal.shearStressMPa, 1)} MPa, σ_vm = ${fmt(result.stressTable.nominal.vonMisesStressMPa, 1)} MPa, SF = ${fmt(result.stressTable.nominal.vonMisesSafetyFactor, 2)} at nominal preload`,
+      },
+      {
         title: 'Yield-onset ("breakoff") torque',
         formula: 'F_yield = proof × As, then T_yield via the same torque-preload formula' + (mode === 'torqueAndAngle' ? '; angle_yield = (F_yield − F_snug) / k_combined / pitch × 360' : ''),
         result:
@@ -478,6 +532,19 @@ export default function BoltedJointCalculator() {
         result: `Required ≥ ${fmt(result.threadShearCheck.requiredEngagementMm, 1)} mm, provided ${fmt(result.threadShearCheck.providedEngagementMm, 1)} mm — ${result.threadShearCheck.pass ? 'pass' : 'fail'}`,
       });
     }
+    steps.push(
+      {
+        title: 'Thread shear stress (external/bolt and internal thread)',
+        formula: 'A ≈ π·D·Le·0.5 (simplified — half the thread circumference over the engaged length), τ = F_bolt / A, SF = 0.577·strength / τ',
+        substitution: `Le = ${fmt(result.threadStress.engagementLengthMm, 1)} mm, bolt minor Ø used for the external check, nominal Ø for the internal check`,
+        result: `External: τ = ${fmt(result.threadStress.externalThreadStressMPa, 1)} MPa, SF = ${fmt(result.threadStress.externalThreadSafetyFactor, 2)}. Internal: τ = ${fmt(result.threadStress.internalThreadStressMPa, 1)} MPa, SF = ${fmt(result.threadStress.internalThreadSafetyFactor, 2)}.`,
+      },
+      {
+        title: 'Pull-through and pin-bearing checks',
+        formula: 'Pull-through: A = π·D_bearing·t_top, σ = F_bolt/A. Pin bearing: A = d·L_grip, σ = V/A. SF = 0.577·yield / σ',
+        result: `Pull-through σ = ${fmt(result.clampedPartsChecks.pullThroughStressMPa, 1)} MPa (SF ${fmt(result.clampedPartsChecks.pullThroughSafetyFactor, 2)}); pin bearing σ = ${fmt(result.clampedPartsChecks.pinBearingStressMPa, 1)} MPa (SF ${fmt(result.clampedPartsChecks.pinBearingSafetyFactor, 2)})`,
+      }
+    );
     if (result.thermalResult) {
       const t = result.thermalResult;
       steps.push({
@@ -488,7 +555,7 @@ export default function BoltedJointCalculator() {
       });
     }
     return steps;
-  }, [result, mode, size, threadFrictionMu, bearingFrictionMu, snugTorqueNm, additionalAngleDeg, tighteningMethod, scatterConvention, externalAxialLoadN, sections, safetyFactorTarget, assemblyTempC, operatingTempC, boltCteOverridePerC]);
+  }, [result, mode, size, threadFrictionMu, bearingFrictionMu, snugTorqueNm, additionalAngleDeg, tighteningMethod, scatterConvention, externalAxialLoadN, externalShearForceN, sections, safetyFactorTarget, assemblyTempC, operatingTempC, boltCteOverridePerC]);
 
   const bomRows: ReportRow[] = useMemo(() => {
     const rows: ReportRow[] = [{ label: 'Bolt', value: buildBoltPartNumber(size, headType, propertyClass.label) }];
@@ -513,6 +580,7 @@ export default function BoltedJointCalculator() {
       { label: 'Tightening method', value: tighteningMethod.label },
       { label: 'Safety factor target', value: fmt(safetyFactorTarget, 2) },
       { label: 'External axial load', value: `${fmt(externalAxialLoadN, 0)} N` },
+      { label: 'External shear force', value: `${fmt(externalShearForceN, 0)} N` },
     ];
     const stackRows: ReportRow[] = sections.map((s, i) => ({
       label: `Section ${i + 1} (${getClampedMaterial(s.materialId).name})`,
@@ -523,7 +591,7 @@ export default function BoltedJointCalculator() {
       { heading: 'Clamped stack-up', rows: stackRows },
       { heading: 'Selected components (representative part designations)', rows: bomRows },
     ];
-  }, [size, headType, propertyClass, threadEngagementMode, nut, threadedInsertPreset, threadFrictionMu, bearingFrictionMu, tighteningMethod, safetyFactorTarget, externalAxialLoadN, sections, bomRows]);
+  }, [size, headType, propertyClass, threadEngagementMode, nut, threadedInsertPreset, threadFrictionMu, bearingFrictionMu, tighteningMethod, safetyFactorTarget, externalAxialLoadN, externalShearForceN, sections, bomRows]);
 
   const outputSections: ReportSection[] = useMemo(
     () => [
@@ -541,6 +609,38 @@ export default function BoltedJointCalculator() {
         rows: [
           { label: 'Bolt stress safety factor', value: fmt(result.boltStressSafetyFactor, 2) },
           { label: 'Joint separation margin', value: `${fmt(result.jointSeparationMarginN, 0)} N` },
+        ],
+      },
+      {
+        heading: 'Joint separation (nominal / min / max)',
+        rows: [
+          { label: 'Separation margin', value: `${fmt(result.stressTable.nominal.jointSeparationMarginN, 0)} / ${fmt(result.stressTable.min.jointSeparationMarginN, 0)} / ${fmt(result.stressTable.max.jointSeparationMarginN, 0)} N` },
+          { label: 'Safety factor', value: `${fmt(result.stressTable.nominal.jointSeparationSafetyFactor, 2)} / ${fmt(result.stressTable.min.jointSeparationSafetyFactor, 2)} / ${fmt(result.stressTable.max.jointSeparationSafetyFactor, 2)}` },
+        ],
+      },
+      {
+        heading: 'Bolt stresses (nominal / min / max, MPa)',
+        rows: [
+          { label: 'Preload stress', value: `${fmt(result.stressTable.nominal.preloadStressMPa, 1)} / ${fmt(result.stressTable.min.preloadStressMPa, 1)} / ${fmt(result.stressTable.max.preloadStressMPa, 1)}` },
+          { label: 'Tensile stress', value: `${fmt(result.stressTable.nominal.tensileStressMPa, 1)} / ${fmt(result.stressTable.min.tensileStressMPa, 1)} / ${fmt(result.stressTable.max.tensileStressMPa, 1)}` },
+          { label: 'Shear stress', value: `${fmt(result.stressTable.nominal.shearStressMPa, 1)} / ${fmt(result.stressTable.min.shearStressMPa, 1)} / ${fmt(result.stressTable.max.shearStressMPa, 1)}` },
+          { label: 'Von Mises stress', value: `${fmt(result.stressTable.nominal.vonMisesStressMPa, 1)} / ${fmt(result.stressTable.min.vonMisesStressMPa, 1)} / ${fmt(result.stressTable.max.vonMisesStressMPa, 1)}` },
+        ],
+      },
+      {
+        heading: 'Thread stress',
+        rows: [
+          { label: 'External (bolt) thread', value: `${fmt(result.threadStress.externalThreadStressMPa, 1)} MPa, SF ${fmt(result.threadStress.externalThreadSafetyFactor, 2)}` },
+          { label: 'Internal thread', value: `${fmt(result.threadStress.internalThreadStressMPa, 1)} MPa, SF ${fmt(result.threadStress.internalThreadSafetyFactor, 2)}` },
+        ],
+      },
+      {
+        heading: 'Clamped parts',
+        rows: [
+          { label: 'Pull-through stress', value: `${fmt(result.clampedPartsChecks.pullThroughStressMPa, 1)} MPa, SF ${fmt(result.clampedPartsChecks.pullThroughSafetyFactor, 2)}` },
+          { label: 'Pin bearing', value: `${fmt(result.clampedPartsChecks.pinBearingStressMPa, 1)} MPa, SF ${fmt(result.clampedPartsChecks.pinBearingSafetyFactor, 2)}` },
+          { label: 'Bearing — top (head side)', value: `${fmt(result.clampedPartsChecks.bearingTopStressMPa, 1)} MPa, SF ${fmt(result.clampedPartsChecks.bearingTopSafetyFactor, 2)}` },
+          { label: 'Bearing — bottom (nut/tapped side)', value: `${fmt(result.clampedPartsChecks.bearingBottomStressMPa, 1)} MPa, SF ${fmt(result.clampedPartsChecks.bearingBottomSafetyFactor, 2)}` },
         ],
       },
       ...(result.thermalResult
@@ -570,7 +670,7 @@ export default function BoltedJointCalculator() {
       outputSections,
       calculationSteps,
       disclaimer:
-        'Engineering estimation tool. Method: Shigley\'s closed-form realization of the VDI 2230 cone-of-compression (frustum) method and torque-preload relationship, ISO 898-1 / SAE J429 property classes. Simplified two-cone (or single-cone for tapped joints) stiffness model; bearing stress checked at outer faces only. Selected-component part designations are standard nomenclature for cross-referencing against a supplier catalog, not a live vendor SKU. Verify against the current official standards and, where required, physical testing before certification use.',
+        'Engineering estimation tool. Method: Shigley\'s closed-form realization of the VDI 2230 cone-of-compression (frustum) method and torque-preload relationship, ISO 898-1 / SAE J429 property classes. Simplified two-cone (or single-cone for tapped joints) stiffness model; bearing stress checked at outer faces only. Thread shear, pull-through, and pin-bearing checks use simplified cylindrical shear-area screening formulas (a 0.5 engagement-fraction factor and a 0.577 distortion-energy shear-yield estimate), not full Machinery\'s-Handbook thread-stripping-area derivations. Selected-component part designations are standard nomenclature for cross-referencing against a supplier catalog, not a live vendor SKU. Verify against the current official standards and, where required, physical testing before certification use.',
       ...branding,
     });
   };
@@ -852,10 +952,32 @@ export default function BoltedJointCalculator() {
               )}
 
               {threadEngagementMode !== 'nutAndBolt' && (
-                <div className="field">
-                  <label>Engagement length (mm)</label>
-                  <input autoComplete="off" type="number" min={0.1} value={engagementLengthMm} onChange={(e) => setEngagementLengthMm(Number(e.target.value))} />
-                  <span className="hint">Depth of thread engagement into the last clamped section ({threadEngagementMode === 'threadedInsert' ? 'via wire thread insert' : 'tapped directly into the material'}).</span>
+                <div className="field" style={{ gridColumn: '1 / -1' }}>
+                  <label>
+                    Engagement length input
+                    <InfoTooltip>Either type the thread engagement depth directly, or type the bolt's overall length (bearing face to tip) and let the engagement depth be derived as whatever's left after passing through every section ahead of the tapped/insert one.</InfoTooltip>
+                  </label>
+                  <div className="segmented">
+                    <button className={engagementInputMode === 'direct' ? 'active' : ''} onClick={() => setEngagementInputMode('direct')}>Engagement length</button>
+                    <button className={engagementInputMode === 'boltLength' ? 'active' : ''} onClick={() => setEngagementInputMode('boltLength')}>Bolt length</button>
+                  </div>
+                  <div className="grid grid-2" style={{ marginTop: '0.5rem' }}>
+                    {engagementInputMode === 'direct' ? (
+                      <div className="field">
+                        <label>Engagement length (mm)</label>
+                        <input autoComplete="off" type="number" min={0.1} value={engagementLengthMm} onChange={(e) => setEngagementLengthMm(Number(e.target.value))} />
+                      </div>
+                    ) : (
+                      <div className="field">
+                        <label>Bolt length (mm)</label>
+                        <input autoComplete="off" type="number" min={0.1} value={boltLengthMm} onChange={(e) => setBoltLengthMm(Number(e.target.value))} />
+                        <span className="hint">Measured from the bearing face (under the head) to the tip — the usual "length" callout for a hex/socket head bolt.</span>
+                      </div>
+                    )}
+                  </div>
+                  <span className="hint" style={{ display: 'block', marginTop: '0.4rem' }}>
+                    Depth of thread engagement into the last clamped section ({threadEngagementMode === 'threadedInsert' ? 'via wire thread insert' : 'tapped directly into the material'}){engagementInputMode === 'boltLength' ? ` — derived: ${fmt(derivedEngagementLengthMm, 1)} mm (bolt length minus ${fmt(upperSectionsThicknessMm, 1)} mm ahead of the tapped section)` : '.'}
+                  </span>
                 </div>
               )}
 
@@ -942,6 +1064,13 @@ export default function BoltedJointCalculator() {
                 <label>External axial load (N)</label>
                 <input autoComplete="off" type="number" min={0} value={externalAxialLoadN} onChange={(e) => setExternalAxialLoadN(Number(e.target.value))} />
                 <span className="hint">Applied tensile load the joint must resist without separating (0 = static preload-only check).</span>
+              </div>
+              <div className="field">
+                <label>
+                  External shear force (N)
+                  <InfoTooltip>A transverse load carried by the bolt shank/hole-wall bearing rather than by axial clamping — drives the shear stress, von Mises stress, and pin-bearing checks below (0 = no transverse load).</InfoTooltip>
+                </label>
+                <input autoComplete="off" type="number" min={0} value={externalShearForceN} onChange={(e) => setExternalShearForceN(Number(e.target.value))} />
               </div>
             </div>
           </div>
@@ -1156,6 +1285,127 @@ export default function BoltedJointCalculator() {
           )}
 
           <div className="card">
+            <div className="card-title">
+              <span>
+                Joint separation
+                <InfoTooltip>How much clamping force remains at the joint interface, and the safety factor against separation (Fi / [P·(1−C)], Shigley Eq. 8-29), evaluated at the nominal preload target and at the realistic min/max scatter band for your chosen tightening method.</InfoTooltip>
+              </span>
+            </div>
+            <table className="data-table">
+              <thead><tr><th>Metric</th><th>Nominal</th><th>Min</th><th>Max</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>Separation margin (N)</td>
+                  {(['nominal', 'min', 'max'] as const).map((k) => (
+                    <td key={k} className={result.stressTable[k].jointSeparates ? 'fail' : 'pass'}>{fmt(result.stressTable[k].jointSeparationMarginN, 0)}</td>
+                  ))}
+                </tr>
+                <tr>
+                  <td>Factor of safety</td>
+                  {(['nominal', 'min', 'max'] as const).map((k) => (
+                    <td key={k} className={result.stressTable[k].jointSeparationSafetyFactor >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(result.stressTable[k].jointSeparationSafetyFactor, 2)}</td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+            <span className="hint">Min/max use the preload scatter band's low/high ends with the same external load — "—" means no external axial load is applied, so there's no separating tendency to compare against.</span>
+          </div>
+
+          <div className="card">
+            <div className="card-title">
+              <span>
+                Bolt stresses
+                <InfoTooltip>Preload stress (clamping force alone), tensile stress (bolt force under the applied external load), shear stress (from the external shear force), and their von Mises combination — each at nominal preload and the min/max scatter band. Safety factor shown in brackets.</InfoTooltip>
+              </span>
+            </div>
+            <table className="data-table">
+              <thead><tr><th>Stress</th><th>Nominal</th><th>Min</th><th>Max</th></tr></thead>
+              <tbody>
+                {([
+                  ['Preload stress', 'preloadStressMPa', 'preloadStressSafetyFactor'],
+                  ['Tensile stress', 'tensileStressMPa', 'tensileStressSafetyFactor'],
+                  ['Shear stress', 'shearStressMPa', 'shearStressSafetyFactor'],
+                  ['Von Mises stress', 'vonMisesStressMPa', 'vonMisesSafetyFactor'],
+                ] as const).map(([label, stressKey, sfKey]) => (
+                  <tr key={label}>
+                    <td>{label}</td>
+                    {(['nominal', 'min', 'max'] as const).map((k) => {
+                      const s = result.stressTable[k];
+                      const sf = s[sfKey];
+                      return (
+                        <td key={k} className={sf >= safetyFactorTarget ? 'pass' : 'fail'}>
+                          {fmt(s[stressKey], 1)} MPa <span className="hint">(SF {fmt(sf, 2)})</span>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <span className="hint">Shear stress is independent of preload, so it (and the resulting von Mises value) only vary Nominal/Min/Max through their preload-driven tensile-stress component.</span>
+          </div>
+
+          <div className="card">
+            <div className="card-title">
+              <span>
+                Thread stress
+                <InfoTooltip>A simplified thread-shear screening check (not a full thread-stripping-area derivation) — the engaged thread's shear area is approximated as half its circumferential cylinder at the relevant diameter over the engaged length.</InfoTooltip>
+              </span>
+            </div>
+            <table className="data-table">
+              <thead><tr><th>Thread</th><th>Shear stress</th><th>Safety factor</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>External (bolt)</td>
+                  <td>{fmt(result.threadStress.externalThreadStressMPa, 1)} MPa</td>
+                  <td className={result.threadStress.externalThreadSafetyFactor >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(result.threadStress.externalThreadSafetyFactor, 2)}</td>
+                </tr>
+                <tr>
+                  <td>Internal ({threadEngagementMode === 'nutAndBolt' ? 'nut' : threadEngagementMode === 'threadedInsert' ? 'insert/tapped' : 'tapped'})</td>
+                  <td>{fmt(result.threadStress.internalThreadStressMPa, 1)} MPa</td>
+                  <td className={result.threadStress.internalThreadSafetyFactor >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(result.threadStress.internalThreadSafetyFactor, 2)}</td>
+                </tr>
+              </tbody>
+            </table>
+            <span className="hint">{result.threadStress.internalThreadReferenceNote}</span>
+          </div>
+
+          <div className="card">
+            <div className="card-title">
+              <span>
+                Clamped parts
+                <InfoTooltip>Pull-through: whether the head/washer could shear-out (punch through) the top clamped section under axial load. Pin bearing: the bolt shank bearing against the clamped stack's hole wall under the external shear force. Bearing top/bottom: the existing outer-face crush checks, tabulated here alongside the others.</InfoTooltip>
+              </span>
+            </div>
+            <table className="data-table">
+              <thead><tr><th>Check</th><th>Stress</th><th>Safety factor</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>Pull-through stress</td>
+                  <td>{fmt(result.clampedPartsChecks.pullThroughStressMPa, 1)} MPa</td>
+                  <td className={result.clampedPartsChecks.pullThroughSafetyFactor >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(result.clampedPartsChecks.pullThroughSafetyFactor, 2)}</td>
+                </tr>
+                <tr>
+                  <td>Pin bearing</td>
+                  <td>{fmt(result.clampedPartsChecks.pinBearingStressMPa, 1)} MPa</td>
+                  <td className={result.clampedPartsChecks.pinBearingSafetyFactor >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(result.clampedPartsChecks.pinBearingSafetyFactor, 2)}</td>
+                </tr>
+                <tr>
+                  <td>Bearing — top (head side)</td>
+                  <td>{fmt(result.clampedPartsChecks.bearingTopStressMPa, 1)} MPa</td>
+                  <td className={result.clampedPartsChecks.bearingTopSafetyFactor >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(result.clampedPartsChecks.bearingTopSafetyFactor, 2)}</td>
+                </tr>
+                <tr>
+                  <td>Bearing — bottom (nut/tapped side)</td>
+                  <td>{fmt(result.clampedPartsChecks.bearingBottomStressMPa, 1)} MPa</td>
+                  <td className={result.clampedPartsChecks.bearingBottomSafetyFactor >= safetyFactorTarget ? 'pass' : 'fail'}>{fmt(result.clampedPartsChecks.bearingBottomSafetyFactor, 2)}</td>
+                </tr>
+              </tbody>
+            </table>
+            <span className="hint">Pin bearing uses the total grip length against the weakest clamped section's material — "—" means no external shear force is applied.</span>
+          </div>
+
+          <div className="card">
             <div className="card-title">Joint cross-section</div>
             <BoltedJointCrossSection
               nominalDiameterMm={size.nominalDiameterMm}
@@ -1167,7 +1417,7 @@ export default function BoltedJointCalculator() {
               frustumSegments={result.frustumSegments}
               geometryValidity={result.geometryValidity}
               threadEngagementMode={threadEngagementMode}
-              engagementLengthMm={threadEngagementMode === 'threadedInsert' ? engagementLengthMm : undefined}
+              engagementLengthMm={threadEngagementMode !== 'nutAndBolt' ? effectiveEngagementLengthMm : undefined}
             />
           </div>
 
@@ -1208,10 +1458,16 @@ export default function BoltedJointCalculator() {
           good general-purpose estimate, not a replacement for full VDI 2230 analysis on complex stacks. Bearing/
           yield stress is checked only at the two outer bearing faces, not interior plate-to-plate interfaces.
           Minimum thread engagement length is a first-principles-scaled estimate (proof-strength-to-yield-strength
-          ratio, floored at 1× nominal diameter), not a full thread-shear-area derivation. Property-class strength
-          values (ISO 898-1 designation formula, SAE J429 typical published grades), all-metal prevailing-torque
-          nut torques, and tightening-method scatter factors (αA) are typical/representative — verify against the
-          current official standards and, where required, physical testing before certification use.
+          ratio, floored at 1× nominal diameter), not a full thread-shear-area derivation. The thread-stress,
+          pull-through, and pin-bearing checks are simplified cylindrical shear-area screening calculations — thread
+          shear area is approximated as half the thread's circumferential cylinder over the engaged length, and a
+          0.577 (1/√3) distortion-energy factor converts tensile proof/yield strength to an estimated shear
+          strength — not full Machinery's-Handbook thread-stripping-area derivations. Bolt-length mode derives the
+          engagement length as the entered bolt length minus the thickness of every clamped section ahead of the
+          tapped/insert one. Property-class strength values (ISO 898-1 designation formula, SAE J429 typical
+          published grades), all-metal prevailing-torque nut torques, and tightening-method scatter factors (αA)
+          are typical/representative — verify against the current official standards and, where required, physical
+          testing before certification use.
         </p>
       </div>
 

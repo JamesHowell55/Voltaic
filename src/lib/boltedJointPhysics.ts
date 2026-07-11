@@ -96,6 +96,7 @@ export interface JointInput {
   scatterConvention: ScatterConvention;
 
   externalAxialLoadN: number;
+  externalShearForceN?: number;
   safetyFactorTarget: number;
 
   thermal?: ThermalInput | null;
@@ -170,6 +171,71 @@ export interface BoltedJointResult {
     jointSeparates: boolean;
     overallPass: boolean;
   } | null;
+
+  stressTable: { nominal: StressSetResult; min: StressSetResult; max: StressSetResult };
+  threadStress: ThreadStressResult;
+  clampedPartsChecks: ClampedPartsChecksResult;
+}
+
+// Full stress set (preload/tensile/shear/von Mises + joint-separation SF) at ONE
+// preload value — computed at nominal preload and again at the scatter band's min
+// and max, so the results tables can show how much margin survives the realistic
+// preload spread from a given tightening method. Independent of, and additive to,
+// the existing computeStressChecks() used for the baseline/thermal solve (kept
+// unchanged for backward compatibility with those call sites).
+export interface StressSetResult {
+  preloadN: number;
+  boltForceUnderLoadN: number;
+  memberForceUnderLoadN: number;
+  jointSeparationMarginN: number;
+  jointSeparates: boolean;
+  jointSeparationSafetyFactor: number; // Fi / [P*(1-C)] — Shigley Eq. 8-29; Infinity when no external axial load is applied
+
+  preloadStressMPa: number;
+  preloadStressSafetyFactor: number;
+  tensileStressMPa: number;
+  tensileStressSafetyFactor: number;
+  shearStressMPa: number;
+  shearStressSafetyFactor: number;
+  vonMisesStressMPa: number;
+  vonMisesSafetyFactor: number;
+
+  memberBearingStressMPa: number[];
+  memberBearingSafetyFactor: number[];
+  memberBearingPass: boolean[];
+}
+
+// Simplified thread-shear screening check (external/bolt thread and internal/nut-
+// or-tapped thread), NOT a full Machinery's-Handbook thread-stripping-area
+// derivation — the shear area is approximated as half the thread's circumferential
+// cylinder at the relevant minor/major diameter over the engaged length, a common
+// quick-check simplification. Verify against the full method for critical or
+// highly loaded threaded joints.
+export interface ThreadStressResult {
+  engagementLengthMm: number;
+  externalThreadStressMPa: number;
+  externalThreadSafetyFactor: number;
+  internalThreadStressMPa: number;
+  internalThreadSafetyFactor: number;
+  internalThreadReferenceStrengthMPa: number;
+  internalThreadReferenceNote: string;
+}
+
+// Clamped-member checks beyond simple bearing crush: pull-through (shear-out of
+// the head-side material around the bearing-face circumference — whether the
+// head/washer could punch through a thin or soft top member) and pin bearing (the
+// bolt shank bearing against the clamped stack's hole wall under a transverse/
+// shear load, projected over the full grip length). Bearing top/bottom duplicate
+// the existing outer-face bearing-stress checks for convenient tabulation.
+export interface ClampedPartsChecksResult {
+  pullThroughStressMPa: number;
+  pullThroughSafetyFactor: number;
+  pinBearingStressMPa: number;
+  pinBearingSafetyFactor: number;
+  bearingTopStressMPa: number;
+  bearingTopSafetyFactor: number;
+  bearingBottomStressMPa: number;
+  bearingBottomSafetyFactor: number;
 }
 
 function resolveSectionMaterial(section: ClampedSectionInput): ClampedMaterial {
@@ -256,6 +322,199 @@ function computeStressChecks(
     memberBearingStressMPa,
     memberBearingSafetyFactor,
     memberBearingPass,
+  };
+}
+
+// 1/sqrt(3) — distortion-energy (von Mises) shear-yield estimate, used to derive a
+// shear/thread "strength" from the bolt or member's tensile proof/yield strength.
+// Numerically identical to TAN30 (tan 30 deg) but kept as a separate named constant
+// since the two represent unrelated physical quantities (cone half-angle vs.
+// shear-yield ratio) and shouldn't be conflated by a shared name.
+const VON_MISES_SHEAR_FACTOR = 1 / Math.sqrt(3);
+
+// Full stress set (preload / tensile / shear / von Mises stress, plus joint-
+// separation safety factor) at a single preload value. Called three times by
+// solveBoltedJoint (nominal preload, and the scatter band's min/max) so the
+// results tables can show how much margin survives realistic preload variation.
+// Independent of computeStressChecks() above (kept unchanged for the existing
+// baseline/thermal call sites) — this is purely additive.
+function computeStressSet(
+  preloadN: number,
+  externalAxialLoadN: number,
+  externalShearForceN: number,
+  jointStiffnessC: number,
+  clampedSections: ClampedSectionInput[],
+  headBearingDiameterMm: number,
+  nutBearingDiameterMm: number,
+  threadEngagementMode: ThreadEngagementMode,
+  proofStrengthMPa: number,
+  tensileStressAreaMm2: number,
+  shankAreaMm2: number,
+  safetyFactorTarget: number
+): StressSetResult {
+  const boltForceUnderLoadN = preloadN + jointStiffnessC * externalAxialLoadN;
+  const memberForceUnderLoadN = preloadN - (1 - jointStiffnessC) * externalAxialLoadN;
+  const jointSeparationMarginN = memberForceUnderLoadN;
+  const jointSeparates = memberForceUnderLoadN <= 0;
+
+  // Shigley Eq. 8-29: n0 = Fi / [P(1-C)] — safety factor against joint separation.
+  const separatingForceN = (1 - jointStiffnessC) * externalAxialLoadN;
+  const jointSeparationSafetyFactor = separatingForceN > 0 ? preloadN / separatingForceN : Infinity;
+
+  const preloadStressMPa = preloadN / tensileStressAreaMm2;
+  const preloadStressSafetyFactor = proofStrengthMPa / preloadStressMPa;
+
+  const tensileStressMPa = boltForceUnderLoadN / tensileStressAreaMm2;
+  const tensileStressSafetyFactor = proofStrengthMPa / tensileStressMPa;
+
+  const shearStressMPa = externalShearForceN / shankAreaMm2;
+  const shearStrengthMPa = VON_MISES_SHEAR_FACTOR * proofStrengthMPa;
+  const shearStressSafetyFactor = shearStressMPa > 0 ? shearStrengthMPa / shearStressMPa : Infinity;
+
+  const vonMisesStressMPa = Math.sqrt(tensileStressMPa * tensileStressMPa + 3 * shearStressMPa * shearStressMPa);
+  const vonMisesSafetyFactor = proofStrengthMPa / vonMisesStressMPa;
+
+  const memberBearingStressMPa: number[] = [];
+  const memberBearingSafetyFactor: number[] = [];
+  const memberBearingPass: boolean[] = [];
+
+  clampedSections.forEach((section, i) => {
+    const isHeadFace = i === 0;
+    const isNutFace = i === clampedSections.length - 1 && threadEngagementMode === 'nutAndBolt';
+    if (!isHeadFace && !isNutFace) {
+      memberBearingStressMPa.push(NaN);
+      memberBearingSafetyFactor.push(NaN);
+      memberBearingPass.push(true);
+      return;
+    }
+    const bearingDiameterMm = isHeadFace ? headBearingDiameterMm : nutBearingDiameterMm;
+    const bearingAreaMm2 = (Math.PI / 4) * (bearingDiameterMm * bearingDiameterMm - section.holeDiameterMm * section.holeDiameterMm);
+    const stress = boltForceUnderLoadN / bearingAreaMm2;
+    const material = resolveSectionMaterial(section);
+    const sf = material.yieldStrengthMPa / stress;
+    memberBearingStressMPa.push(stress);
+    memberBearingSafetyFactor.push(sf);
+    memberBearingPass.push(sf >= safetyFactorTarget);
+  });
+
+  return {
+    preloadN,
+    boltForceUnderLoadN,
+    memberForceUnderLoadN,
+    jointSeparationMarginN,
+    jointSeparates,
+    jointSeparationSafetyFactor,
+    preloadStressMPa,
+    preloadStressSafetyFactor,
+    tensileStressMPa,
+    tensileStressSafetyFactor,
+    shearStressMPa,
+    shearStressSafetyFactor,
+    vonMisesStressMPa,
+    vonMisesSafetyFactor,
+    memberBearingStressMPa,
+    memberBearingSafetyFactor,
+    memberBearingPass,
+  };
+}
+
+// ISO 68-1 60 deg V-thread minor-diameter relations (H = 0.866025*P):
+//   d3 (external/bolt minor diameter) = d - 1.226869*P
+//   D1 (internal minor diameter)      = d - 1.082532*P
+export function threadMinorDiametersMm(nominalDiameterMm: number, pitchMm: number): { boltMinorMm: number; internalMinorMm: number } {
+  return {
+    boltMinorMm: nominalDiameterMm - 1.226869 * pitchMm,
+    internalMinorMm: nominalDiameterMm - 1.082532 * pitchMm,
+  };
+}
+
+// Simplified thread-shear screening check — NOT a full Machinery's-Handbook thread-
+// stripping-area derivation. Shear area is approximated as half the thread's
+// circumferential cylinder (a common quick-check factor) at the bolt's minor
+// diameter (external thread) or the nominal major diameter (internal thread), over
+// the engaged length. Verify against the full method for critical/highly loaded
+// threaded joints.
+function computeThreadStress(
+  boltForceN: number,
+  nominalDiameterMm: number,
+  pitchMm: number,
+  engagementLengthMm: number,
+  boltProofStrengthMPa: number,
+  threadEngagementMode: ThreadEngagementMode,
+  lastSectionMaterial: ClampedMaterial | null
+): ThreadStressResult {
+  const { boltMinorMm } = threadMinorDiametersMm(nominalDiameterMm, pitchMm);
+  const le = Math.max(engagementLengthMm, 1e-6);
+
+  const externalAreaMm2 = Math.PI * boltMinorMm * le * 0.5;
+  const externalThreadStressMPa = boltForceN / externalAreaMm2;
+  const externalThreadSafetyFactor = (VON_MISES_SHEAR_FACTOR * boltProofStrengthMPa) / externalThreadStressMPa;
+
+  let internalThreadReferenceStrengthMPa: number;
+  let internalThreadReferenceNote: string;
+  if (threadEngagementMode === 'nutAndBolt') {
+    internalThreadReferenceStrengthMPa = boltProofStrengthMPa;
+    internalThreadReferenceNote = "Assumes a correctly matched nut (ISO 898-2: nut proof load >= bolt proof load) — nut material strength isn't modelled directly.";
+  } else {
+    internalThreadReferenceStrengthMPa = lastSectionMaterial?.yieldStrengthMPa ?? boltProofStrengthMPa;
+    internalThreadReferenceNote =
+      threadEngagementMode === 'threadedInsert'
+        ? "Uses the tapped (parent) material's yield strength — the insert's own coil strength isn't modelled separately."
+        : "Uses the tapped material's yield strength.";
+  }
+  const internalAreaMm2 = Math.PI * nominalDiameterMm * le * 0.5;
+  const internalThreadStressMPa = boltForceN / internalAreaMm2;
+  const internalThreadSafetyFactor = (VON_MISES_SHEAR_FACTOR * internalThreadReferenceStrengthMPa) / internalThreadStressMPa;
+
+  return {
+    engagementLengthMm: le,
+    externalThreadStressMPa,
+    externalThreadSafetyFactor,
+    internalThreadStressMPa,
+    internalThreadSafetyFactor,
+    internalThreadReferenceStrengthMPa,
+    internalThreadReferenceNote,
+  };
+}
+
+// Clamped-member checks beyond simple bearing crush. Pull-through: shear-out of the
+// head-side material around the bearing-face circumference (whether the head/
+// washer could punch through a thin or soft top member) — distinct from the
+// bearing-crush check, which treats the same interface as a compressive-bearing
+// annulus. Pin bearing: the bolt shank bearing against the clamped stack's hole
+// wall under a transverse/shear load, projected over the full grip length and
+// checked against the weakest clamped section (governs conservatively).
+function computeClampedPartsChecks(
+  boltForceN: number,
+  externalShearForceN: number,
+  nominalDiameterMm: number,
+  headBearingDiameterMm: number,
+  clampedSections: ClampedSectionInput[],
+  memberBearingStressMPa: number[],
+  memberBearingSafetyFactor: number[]
+): ClampedPartsChecksResult {
+  const firstSection = clampedSections[0];
+  const firstMaterial = resolveSectionMaterial(firstSection);
+  const pullThroughAreaMm2 = Math.PI * headBearingDiameterMm * firstSection.thicknessMm;
+  const pullThroughStressMPa = boltForceN / pullThroughAreaMm2;
+  const pullThroughSafetyFactor = (VON_MISES_SHEAR_FACTOR * firstMaterial.yieldStrengthMPa) / pullThroughStressMPa;
+
+  const totalGripMm = clampedSections.reduce((sum, s) => sum + s.thicknessMm, 0);
+  const pinBearingAreaMm2 = nominalDiameterMm * totalGripMm;
+  const pinBearingStressMPa = externalShearForceN / pinBearingAreaMm2;
+  const weakestYieldMPa = Math.min(...clampedSections.map((s) => resolveSectionMaterial(s).yieldStrengthMPa));
+  const pinBearingSafetyFactor = pinBearingStressMPa > 0 ? (VON_MISES_SHEAR_FACTOR * weakestYieldMPa) / pinBearingStressMPa : Infinity;
+
+  const lastIdx = memberBearingStressMPa.length - 1;
+  return {
+    pullThroughStressMPa,
+    pullThroughSafetyFactor,
+    pinBearingStressMPa,
+    pinBearingSafetyFactor,
+    bearingTopStressMPa: memberBearingStressMPa[0],
+    bearingTopSafetyFactor: memberBearingSafetyFactor[0],
+    bearingBottomStressMPa: memberBearingStressMPa[lastIdx],
+    bearingBottomSafetyFactor: memberBearingSafetyFactor[lastIdx],
   };
 }
 
@@ -588,6 +847,47 @@ export function solveBoltedJoint(input: JointInput): BoltedJointResult {
     };
   }
 
+  // Nominal/min/max stress table, thread-shear screening, and clamped-parts checks
+  // (pull-through, pin bearing) — additive to the baseline checks above.
+  const externalShearForceN = input.externalShearForceN ?? 0;
+  const stressSetArgs = [
+    jointStiffnessC,
+    clampedSections,
+    headBearingDiameterMm,
+    nutBearingDiameterMm,
+    input.threadEngagementMode,
+    propertyClass.proofStrengthMPa,
+    size.tensileStressAreaMm2,
+    shankAreaMm2,
+    input.safetyFactorTarget,
+  ] as const;
+  const stressTable: BoltedJointResult['stressTable'] = {
+    nominal: computeStressSet(preloadN, input.externalAxialLoadN, externalShearForceN, ...stressSetArgs),
+    min: computeStressSet(preloadScatterBand.minN, input.externalAxialLoadN, externalShearForceN, ...stressSetArgs),
+    max: computeStressSet(preloadScatterBand.maxN, input.externalAxialLoadN, externalShearForceN, ...stressSetArgs),
+  };
+
+  const lastSectionMaterial = input.threadEngagementMode !== 'nutAndBolt' ? resolveSectionMaterial(clampedSections[clampedSections.length - 1]) : null;
+  const threadStress = computeThreadStress(
+    stressTable.nominal.boltForceUnderLoadN,
+    d,
+    size.pitchMm,
+    effectiveEngagementMm,
+    propertyClass.proofStrengthMPa,
+    input.threadEngagementMode,
+    lastSectionMaterial
+  );
+
+  const clampedPartsChecks = computeClampedPartsChecks(
+    stressTable.nominal.boltForceUnderLoadN,
+    externalShearForceN,
+    d,
+    headBearingDiameterMm,
+    clampedSections,
+    memberBearingStressMPa,
+    memberBearingSafetyFactor
+  );
+
   const overallPass =
     boltStressPass &&
     memberBearingPass.every(Boolean) &&
@@ -595,7 +895,12 @@ export function solveBoltedJoint(input: JointInput): BoltedJointResult {
     geometryValidity.holeClearanceOk &&
     geometryValidity.gripLengthExceedsFastenerOk &&
     !jointSeparates &&
-    (thermalResult ? thermalResult.overallPass : true);
+    (thermalResult ? thermalResult.overallPass : true) &&
+    stressTable.nominal.vonMisesSafetyFactor >= input.safetyFactorTarget &&
+    threadStress.externalThreadSafetyFactor >= input.safetyFactorTarget &&
+    threadStress.internalThreadSafetyFactor >= input.safetyFactorTarget &&
+    clampedPartsChecks.pullThroughSafetyFactor >= input.safetyFactorTarget &&
+    clampedPartsChecks.pinBearingSafetyFactor >= input.safetyFactorTarget;
 
   return {
     boltSegments,
@@ -628,5 +933,8 @@ export function solveBoltedJoint(input: JointInput): BoltedJointResult {
     geometryValidity,
     overallPass,
     thermalResult,
+    stressTable,
+    threadStress,
+    clampedPartsChecks,
   };
 }

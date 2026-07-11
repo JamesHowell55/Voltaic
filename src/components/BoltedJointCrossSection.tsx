@@ -12,12 +12,13 @@ interface Props {
   frustumSegments: FrustumSegment[];
   geometryValidity: GeometryValidity | null;
   threadEngagementMode?: ThreadEngagementMode;
-  engagementLengthMm?: number;
+  engagementLengthMm?: number; // tapped or threadedInsert only
 }
 
 const DRAW_W = 480;
 const DRAW_H = 380;
 const MARGIN = 60;
+const TAN30 = 0.5774;
 
 export default function BoltedJointCrossSection({
   nominalDiameterMm,
@@ -66,6 +67,7 @@ export default function BoltedJointCrossSection({
 
   const invalidHole = geometryValidity ? !geometryValidity.holeClearanceOk : false;
   const invalidEngagement = geometryValidity ? !geometryValidity.engagementLengthOk : false;
+  const isNoNutMode = threadEngagementMode !== undefined && threadEngagementMode !== 'nutAndBolt';
 
   const elements: ReactElement[] = [];
   const dimTicks: { y: number; label: string }[] = [];
@@ -113,6 +115,8 @@ export default function BoltedJointCrossSection({
   });
 
   const stackBottomY = cursorY;
+  const lastSectionTopY = sectionYs[sectionYs.length - 1].y0;
+  const lastSectionHeightPx = sectionYs[sectionYs.length - 1].y1 - sectionYs[sectionYs.length - 1].y0;
 
   // Nut washer
   if (underNutWasher) {
@@ -124,22 +128,50 @@ export default function BoltedJointCrossSection({
     drawRect(nutHeightMm, nut.flatsAcrossMm, 'var(--accent-glow)', invalidEngagement ? 'var(--neg)' : 'var(--accent)');
   }
 
-  // Bolt shank/thread — centered vertical rect through the whole assembly
+  // Representative embedment depth for tapped/threaded-insert modes — how far the
+  // bolt actually penetrates the last clamped section, capped to that section's own
+  // thickness (a longer entered engagement is a separate validity warning shown
+  // elsewhere, not something this drawing should extend past the material).
+  const cappedEngagementPx = isNoNutMode && engagementLengthMm
+    ? Math.min(Math.max(engagementLengthMm, 0), sectionYs[sectionYs.length - 1].section.thicknessMm) * scale
+    : lastSectionHeightPx;
+  const boltTipY = isNoNutMode ? lastSectionTopY + cappedEngagementPx : cursorY;
+
+  // Bolt shank/thread — a representative length: for nut & bolt it runs the full
+  // stack through the nut; for tapped/threaded-insert it stops where the bolt
+  // actually embeds, with a small tapered tip rather than running to the bottom of
+  // the tapped member regardless of how deep the thread engagement really is.
   const shankWidthPx = d * scale;
-  elements.unshift(
-    <rect key="shank" x={centerX - shankWidthPx / 2} y={MARGIN} width={shankWidthPx} height={cursorY - MARGIN} fill="var(--accent-border)" stroke="var(--accent)" strokeWidth={1} opacity={0.5} />
-  );
+  const tipTaperPx = Math.min(d * 0.4, 10) * scale;
+  const shankElements: ReactElement[] = [
+    <rect key="shank" x={centerX - shankWidthPx / 2} y={MARGIN} width={shankWidthPx} height={Math.max(0, boltTipY - MARGIN - (isNoNutMode ? tipTaperPx : 0))} fill="var(--accent-border)" stroke="var(--accent)" strokeWidth={1} opacity={0.5} />,
+  ];
+  if (isNoNutMode) {
+    const taperTopY = boltTipY - tipTaperPx;
+    shankElements.push(
+      <polygon
+        key="shank-tip"
+        points={`${centerX - shankWidthPx / 2},${taperTopY} ${centerX + shankWidthPx / 2},${taperTopY} ${centerX},${boltTipY}`}
+        fill="var(--accent-border)"
+        stroke="var(--accent)"
+        strokeWidth={1}
+        opacity={0.5}
+      />
+    );
+  }
+  elements.unshift(...shankElements);
 
   // Threaded insert (helicoil-style) — a distinct coil/sleeve within the engagement
-  // zone at the bottom of the last clamped section, drawn on top of everything else.
+  // zone at the TOP of the last clamped section (where the bolt actually enters the
+  // tapped material), drawn on top of everything else.
   if (threadEngagementMode === 'threadedInsert' && engagementLengthMm && engagementLengthMm > 0) {
     const insertWidthPx = (d + 1) * scale;
-    const insertHeightPx = engagementLengthMm * scale;
+    const insertHeightPx = cappedEngagementPx;
     elements.push(
       <rect
         key="insert"
         x={centerX - insertWidthPx / 2}
-        y={stackBottomY - insertHeightPx}
+        y={lastSectionTopY}
         width={insertWidthPx}
         height={insertHeightPx}
         fill="none"
@@ -150,7 +182,7 @@ export default function BoltedJointCrossSection({
       />
     );
     elements.push(
-      <text key="insert-label" x={centerX + insertWidthPx / 2 + 6} y={stackBottomY - insertHeightPx / 2 + 3} fontSize="9" fill="var(--warn)" fontFamily="ui-monospace, monospace">
+      <text key="insert-label" x={centerX + insertWidthPx / 2 + 6} y={lastSectionTopY + insertHeightPx / 2 + 3} fontSize="9" fill="var(--warn)" fontFamily="ui-monospace, monospace">
         insert
       </text>
     );
@@ -161,38 +193,90 @@ export default function BoltedJointCrossSection({
   const headSegs = frustumSegments.filter((s) => s.fromBearingFace === 'head');
   const nutSegs = frustumSegments.filter((s) => s.fromBearingFace === 'nut');
 
-  let headCursor = stackTopY;
-  headSegs.forEach((seg, i) => {
-    const segPx = seg.thicknessMm * scale;
-    const halfBase = (seg.baseDiameterMm / 2) * scale;
-    const halfWide = (seg.baseDiameterMm / 2 + seg.thicknessMm * 0.5774) * scale;
-    const y0 = headCursor;
-    const y1 = headCursor + segPx;
-    frustumEls.push(
-      <polygon
-        key={`fh-${i}`}
-        points={`${centerX - halfBase},${y0} ${centerX + halfBase},${y0} ${centerX + halfWide},${y1} ${centerX - halfWide},${y1}`}
-        fill="var(--accent-glow)"
-        stroke="var(--accent)"
-        strokeDasharray="2,2"
-        strokeWidth={1}
-        opacity={0.55}
-      />
-    );
-    headCursor = y1;
-  });
+  if (nutSegs.length > 0) {
+    // Nut & bolt: two independent widening cones (head + nut) that meet near the
+    // stack mid-plane — together they already form the correct "widen then narrow"
+    // double-cone silhouette, so each is drawn as a simple single-direction taper.
+    let headCursor = stackTopY;
+    headSegs.forEach((seg, i) => {
+      const segPx = seg.thicknessMm * scale;
+      const halfBase = (seg.baseDiameterMm / 2) * scale;
+      const halfWide = (seg.baseDiameterMm / 2 + seg.thicknessMm * TAN30) * scale;
+      const y0 = headCursor;
+      const y1 = headCursor + segPx;
+      frustumEls.push(
+        <polygon
+          key={`fh-${i}`}
+          points={`${centerX - halfBase},${y0} ${centerX + halfBase},${y0} ${centerX + halfWide},${y1} ${centerX - halfWide},${y1}`}
+          fill="var(--accent-glow)"
+          stroke="var(--accent)"
+          strokeDasharray="2,2"
+          strokeWidth={1}
+          opacity={0.55}
+        />
+      );
+      headCursor = y1;
+    });
 
-  let nutCursor = stackBottomY;
-  nutSegs.forEach((seg, i) => {
-    const segPx = seg.thicknessMm * scale;
-    const halfBase = (seg.baseDiameterMm / 2) * scale;
-    const halfWide = (seg.baseDiameterMm / 2 + seg.thicknessMm * 0.5774) * scale;
-    const yBottom = nutCursor;
-    const yTop = nutCursor - segPx;
+    let nutCursor = stackBottomY;
+    nutSegs.forEach((seg, i) => {
+      const segPx = seg.thicknessMm * scale;
+      const halfBase = (seg.baseDiameterMm / 2) * scale;
+      const halfWide = (seg.baseDiameterMm / 2 + seg.thicknessMm * TAN30) * scale;
+      const yBottom = nutCursor;
+      const yTop = nutCursor - segPx;
+      frustumEls.push(
+        <polygon
+          key={`fn-${i}`}
+          points={`${centerX - halfBase},${yBottom} ${centerX + halfBase},${yBottom} ${centerX + halfWide},${yTop} ${centerX - halfWide},${yTop}`}
+          fill="var(--accent-glow)"
+          stroke="var(--accent)"
+          strokeDasharray="2,2"
+          strokeWidth={1}
+          opacity={0.55}
+        />
+      );
+      nutCursor = yTop;
+    });
+  } else if (headSegs.length > 0) {
+    // Tapped / threaded insert: only ONE physical cone is modelled in the stiffness
+    // math (head bearing face down to the mid-point of thread engagement) since
+    // there's no opposing bearing face for a second widening cone. But the
+    // reaction is carried through the engaged threads at roughly the bolt's own
+    // diameter — so, purely for this drawing (not the stiffness numbers above),
+    // the cone is mirrored back down to bolt diameter over the same total depth:
+    // it widens under the head, then tapers back toward the bolt's width by the
+    // reaction plane, instead of growing without bound.
+    const totalMm = headSegs.reduce((s, seg) => s + seg.thicknessMm, 0);
+    let radiusMm = headSegs[0].baseDiameterMm / 2;
+    let widenCursorY = stackTopY;
+    headSegs.forEach((seg, i) => {
+      const halfThicknessMm = seg.thicknessMm / 2;
+      const y0 = widenCursorY;
+      const y1 = widenCursorY + halfThicknessMm * scale;
+      const halfBase = radiusMm * scale;
+      radiusMm += halfThicknessMm * TAN30;
+      const halfWide = radiusMm * scale;
+      frustumEls.push(
+        <polygon
+          key={`fh-${i}`}
+          points={`${centerX - halfBase},${y0} ${centerX + halfBase},${y0} ${centerX + halfWide},${y1} ${centerX - halfWide},${y1}`}
+          fill="var(--accent-glow)"
+          stroke="var(--accent)"
+          strokeDasharray="2,2"
+          strokeWidth={1}
+          opacity={0.55}
+        />
+      );
+      widenCursorY = y1;
+    });
+    const boltHalfPx = (d / 2) * scale;
+    const wideHalfPx = radiusMm * scale;
+    const narrowEndY = stackTopY + totalMm * scale;
     frustumEls.push(
       <polygon
-        key={`fn-${i}`}
-        points={`${centerX - halfBase},${yBottom} ${centerX + halfBase},${yBottom} ${centerX + halfWide},${yTop} ${centerX - halfWide},${yTop}`}
+        key="fh-return"
+        points={`${centerX - wideHalfPx},${widenCursorY} ${centerX + wideHalfPx},${widenCursorY} ${centerX + boltHalfPx},${narrowEndY} ${centerX - boltHalfPx},${narrowEndY}`}
         fill="var(--accent-glow)"
         stroke="var(--accent)"
         strokeDasharray="2,2"
@@ -200,8 +284,7 @@ export default function BoltedJointCrossSection({
         opacity={0.55}
       />
     );
-    nutCursor = yTop;
-  });
+  }
 
   const midplaneY = (stackTopY + stackBottomY) / 2;
 
@@ -238,6 +321,17 @@ export default function BoltedJointCrossSection({
           grip {totalStackMm.toFixed(1)} mm
         </text>
       </g>
+
+      {/* representative bolt length (far left margin) — tapped/threaded-insert only,
+          measured from the bearing face (under the head) to the tip */}
+      {isNoNutMode && (
+        <g fontSize="10" fill="var(--accent)" fontFamily="ui-monospace, monospace">
+          <line x1={20} y1={stackTopY} x2={20} y2={boltTipY} stroke="var(--accent)" strokeWidth={1} opacity={0.6} />
+          <text x={16} y={(stackTopY + boltTipY) / 2} textAnchor="end" transform={`rotate(-90 16 ${(stackTopY + boltTipY) / 2})`}>
+            bolt length {((boltTipY - stackTopY) / scale).toFixed(1)} mm
+          </text>
+        </g>
+      )}
 
       <text x={DRAW_W / 2} y={DRAW_H - 8} textAnchor="middle" fontSize="10" fill="var(--text-faint)" fontFamily="ui-monospace, monospace">
         {clampedSections.length} clamped section{clampedSections.length > 1 ? 's' : ''} · {nut ? 'nut & bolt' : 'tapped/insert'} · dimensions in mm
