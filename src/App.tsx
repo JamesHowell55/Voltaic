@@ -12,6 +12,7 @@ import ChokeSizingCalculator from './pages/ChokeSizingCalculator';
 import MosfetLossCalculator from './pages/MosfetLossCalculator';
 import BundleDiameterCalculator from './pages/BundleDiameterCalculator';
 import HarnessDesigner from './pages/HarnessDesigner';
+import ORingCalculator from './pages/ORingCalculator';
 import SkinDepthCalculator from './pages/SkinDepthCalculator';
 import ConversionsCalculator from './pages/ConversionsCalculator';
 import ComingSoonCalculator from './pages/ComingSoonCalculator';
@@ -47,6 +48,7 @@ function App() {
               <Route path="/busbar" element={<BusbarCalculator />} />
               <Route path="/creepage-clearance" element={<CreepageClearanceCalculator />} />
               <Route path="/bolted-joint" element={<BoltedJointCalculator />} />
+              <Route path="/o-ring" element={<ORingCalculator />} />
               <Route path="/cable-sizing" element={<CableWireSizingCalculator />} />
               <Route path="/battery-pack-series-parallel" element={<BatteryPackSeriesParallelCalculator />} />
               <Route path="/speed-torque-power" element={<MotorTorquePowerSpeedCalculator />} />

@@ -175,6 +175,7 @@ const CALCULATOR_META: Record<string, { label: string; path: string }> = {
   'choke-sizing': { label: 'Choke Sizing', path: '/choke-sizing' },
   'mosfet-loss': { label: 'MOSFET Loss Calculator', path: '/mosfet-loss' },
   'harness-designer': { label: 'Harness Designer', path: '/harness-designer' },
+  'o-ring': { label: 'O-Ring Seal Calculator', path: '/o-ring' },
 };
 
 interface SaveRow {

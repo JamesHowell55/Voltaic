@@ -26,6 +26,10 @@ export const in2ToMm2 = (in2: number): number => in2 * MM2_PER_IN2;
 export const mToFt = (m: number): number => m / M_PER_FT;
 export const ftToM = (ft: number): number => ft * M_PER_FT;
 
+const PSI_PER_MPA = 145.037738;
+export const mpaToPsi = (mpa: number): number => mpa * PSI_PER_MPA;
+export const psiToMpa = (psi: number): number => psi / PSI_PER_MPA;
+
 export const nToLbf = (n: number): number => n / N_PER_LBF;
 export const lbfToN = (lbf: number): number => lbf * N_PER_LBF;
 
@@ -63,6 +67,7 @@ export interface UnitDef {
 export const UNIT_LENGTH: UnitDef = { siLabel: 'mm', imperialLabel: 'in', toImperial: mmToIn, toSI: inToMm };
 export const UNIT_LENGTH_M: UnitDef = { siLabel: 'm', imperialLabel: 'ft', toImperial: mToFt, toSI: ftToM };
 export const UNIT_AREA: UnitDef = { siLabel: 'mm²', imperialLabel: 'in²', toImperial: mm2ToIn2, toSI: in2ToMm2 };
+export const UNIT_PRESSURE: UnitDef = { siLabel: 'MPa', imperialLabel: 'psi', toImperial: mpaToPsi, toSI: psiToMpa };
 export const UNIT_FORCE: UnitDef = { siLabel: 'N', imperialLabel: 'lbf', toImperial: nToLbf, toSI: lbfToN };
 export const UNIT_STRESS: UnitDef = { siLabel: 'MPa', imperialLabel: 'ksi', toImperial: mpaToKsi, toSI: ksiToMpa };
 export const UNIT_MODULUS: UnitDef = { siLabel: 'GPa', imperialLabel: 'Mpsi', toImperial: gpaToMpsi, toSI: mpsiToGpa };

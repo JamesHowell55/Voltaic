@@ -58,6 +58,7 @@ export const NAV_CATEGORIES: NavCategory[] = [
     label: 'Mechanical',
     links: [
       { label: 'Bolted Joint', path: '/bolted-joint', available: true, description: 'Metric and imperial fastener stack-ups, washers and locking nuts, tapped or threaded-insert engagement, VDI 2230 cone-of-compression stiffness, bidirectional preload/torque, and fastener/clamped-member yield checks.' },
+      { label: 'O-Ring Seal', path: '/o-ring', available: true, description: 'O-Ring gland design to the Trelleborg design guide — static/dynamic radial (rod and piston), axial face, and non-circular face grooves via neutral-axis length, with ISO 286 fits or custom tolerances, AS568 / ISO 3601-1 Class A/B size selection, material guidance, and squeeze/stretch/fill/extrusion checks.' },
     ],
   },
 ];
