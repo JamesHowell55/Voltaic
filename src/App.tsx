@@ -14,6 +14,7 @@ import BundleDiameterCalculator from './pages/BundleDiameterCalculator';
 import HarnessDesigner from './pages/HarnessDesigner';
 import ORingCalculator from './pages/ORingCalculator';
 import FitsAndLimitsCalculator from './pages/FitsAndLimitsCalculator';
+import DqCurrentCalculator from './pages/DqCurrentCalculator';
 import SkinDepthCalculator from './pages/SkinDepthCalculator';
 import ConversionsCalculator from './pages/ConversionsCalculator';
 import ComingSoonCalculator from './pages/ComingSoonCalculator';
@@ -54,6 +55,7 @@ function App() {
               <Route path="/cable-sizing" element={<CableWireSizingCalculator />} />
               <Route path="/battery-pack-series-parallel" element={<BatteryPackSeriesParallelCalculator />} />
               <Route path="/speed-torque-power" element={<MotorTorquePowerSpeedCalculator />} />
+              <Route path="/id-iq-current" element={<DqCurrentCalculator />} />
               <Route path="/choke-sizing" element={<ChokeSizingCalculator />} />
               <Route path="/mosfet-loss" element={<MosfetLossCalculator />} />
               <Route path="/harness-bundle-diameter" element={<BundleDiameterCalculator />} />

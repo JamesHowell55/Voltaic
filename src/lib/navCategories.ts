@@ -46,6 +46,7 @@ export const NAV_CATEGORIES: NavCategory[] = [
     label: 'Motors',
     links: [
       { label: 'Speed ↔ Torque ↔ Power', path: '/speed-torque-power', available: true, description: 'Solve for any one of torque, power, or speed given the other two (P = T·ω), with common unit conversions built in, plus optional cross-checks for a PM motor\'s torque constant and efficiency-adjusted electrical input power.' },
+      { label: 'Id / Iq Current Vector', path: '/id-iq-current', available: true, description: 'Convert between phase-current magnitude (peak or RMS), current angle, and the rotor-frame d-/q-axis currents (Id, Iq) of a PMSM under field-oriented control, with a space-vector diagram plus derived torque (magnet + reluctance), MTPA comparison, and speed-dependent back-EMF and shaft power.' },
     ],
   },
   {
