@@ -306,6 +306,12 @@ export default function BusbarCalculator() {
   const energyPerNodeJ = durationMode === 'fault' ? adiabatic?.energyJPerNode : durationMode === 'profile' ? transient?.energyJPerNode : undefined;
   const totalLossW = lossPerNodeW ? lossPerNodeW.reduce((a, b) => a + b, 0) : undefined;
   const totalEnergyJ = energyPerNodeJ ? energyPerNodeJ.reduce((a, b) => a + b, 0) : undefined;
+  // Series sum of every node's Rac — for 'single' busbars with multiple lengthwise
+  // sections this is the end-to-end resistance; for 'multiple' (bundle) busbars
+  // there's only one lumped node, so it's just that bundle's resistance.
+  const totalResistanceOhm = durationMode === 'continuous' && steady
+    ? steady.racTotalPerNode.reduce((a, b) => a + b, 0)
+    : undefined;
 
   const worstTempC = durationMode === 'continuous' ? (steady ? Math.max(...steady.tempsC) : undefined)
     : durationMode === 'fault' ? (adiabatic ? Math.max(...adiabatic.finalTempsC) : undefined)
@@ -440,7 +446,7 @@ export default function BusbarCalculator() {
       elecRows.push({ label: 'Max short-time temp', value: `${fmtU(maxFaultTempC, unitSystem, UNIT_TEMP, 1)} ${unitLabel(unitSystem, UNIT_TEMP)}` });
     }
     if (durationMode === 'profile') {
-      steps.forEach((s, i) => elecRows.push({ label: `Step ${i + 1}`, value: `${s.current} A for ${s.durationS} s` }));
+      steps.forEach((s, i) => elecRows.push({ label: `Step ${i + 1}`, value: `${s.current} A rms for ${s.durationS} s` }));
       elecRows.push({ label: 'Max allowable temp', value: `${fmtU(maxContinuousTempC, unitSystem, UNIT_TEMP, 1)} ${unitLabel(unitSystem, UNIT_TEMP)}` });
     }
 
@@ -473,10 +479,13 @@ export default function BusbarCalculator() {
       { label: durationMode === 'continuous' ? 'Peak steady-state temp' : durationMode === 'fault' ? 'Peak temp (fault)' : 'Peak temp (profile)', value: worstTempC !== undefined ? `${fmtU(worstTempC, unitSystem, UNIT_TEMP, 1)} ${unitLabel(unitSystem, UNIT_TEMP)}` : '—' },
       { label: 'Temperature rise', value: worstTempC !== undefined ? `${fmtU(worstTempC - referenceTempC, unitSystem, UNIT_TEMP_DELTA, 1)} ${unitSystem === 'imperial' ? '°F' : 'K'}` : '—' },
     ];
-    if (durationMode === 'continuous') headline.push({ label: 'Max continuous current', value: maxCurrent !== null ? `${fmt(maxCurrent, 0)} A` : '—' });
+    if (durationMode === 'continuous') headline.push({ label: 'Max continuous current (rms)', value: maxCurrent !== null ? `${fmt(maxCurrent, 0)} A` : '—' });
     if (durationMode === 'fault') headline.push({ label: 'Min area for this fault', value: minArea !== null ? `${fmtU(minArea, unitSystem, UNIT_AREA, 3)} ${unitLabel(unitSystem, UNIT_AREA)}` : '—' });
     if (durationMode === 'profile' && transient) headline.push({ label: 'Profile duration', value: `${fmt(transient.timeS[transient.timeS.length - 1], 0)} s` });
     headline.push({ label: 'Total busbar loss', value: durationMode === 'continuous' ? (totalLossW !== undefined ? `${fmt(totalLossW, 1)} W` : '—') : (totalEnergyJ !== undefined ? `${fmt(totalEnergyJ / 1000, 2)} kJ` : '—') });
+    if (durationMode === 'continuous' && totalResistanceOhm !== undefined) {
+      headline.push({ label: `Resistance (${currentType === 'ac' ? 'Rac' : 'Rdc'})`, value: `${fmt(totalResistanceOhm * 1e6, 1)} µΩ` });
+    }
     if (currentType === 'ac' && skinDepthAtTempMm !== null) {
       headline.push({ label: 'Skin depth', value: `${isFinite(skinDepthAtTempMm) ? fmtU(skinDepthAtTempMm, unitSystem, UNIT_LENGTH, 4) : '—'} ${unitLabel(unitSystem, UNIT_LENGTH)} (at ${fmtU(skinDepthTempC, unitSystem, UNIT_TEMP, 0)}${unitLabel(unitSystem, UNIT_TEMP)}, ${fmt(frequency, 0)} Hz)` });
     }
@@ -497,7 +506,7 @@ export default function BusbarCalculator() {
       { heading: 'Summary', rows: headline },
       { heading: busbarType === 'single' ? 'Per-section results' : 'Bundle result', rows: nodeRows },
     ];
-  }, [durationMode, worstTempC, referenceTempC, maxCurrent, minArea, transient, totalLossW, totalEnergyJ, nodes, steady, adiabatic, busbarType, anySectionCooled, coolantTotalHeatW, coolantTempRiseK, currentType, skinDepthAtTempMm, skinDepthTempC, frequency, unitSystem]);
+  }, [durationMode, worstTempC, referenceTempC, maxCurrent, minArea, transient, totalLossW, totalEnergyJ, totalResistanceOhm, nodes, steady, adiabatic, busbarType, anySectionCooled, coolantTotalHeatW, coolantTempRiseK, currentType, skinDepthAtTempMm, skinDepthTempC, frequency, unitSystem]);
 
   const handleExportPdf = () => {
     const pdfAccent = deriveAccentOnLight(accentHex);
@@ -685,6 +694,11 @@ export default function BusbarCalculator() {
                   <button className={orientation === 'vertical' ? 'active' : ''} onClick={() => setOrientation('vertical')}>Vertical (edge)</button>
                   <button className={orientation === 'horizontal' ? 'active' : ''} onClick={() => setOrientation('horizontal')}>Horizontal (flat)</button>
                 </div>
+                <span className="hint">
+                  {convMode === 'manual'
+                    ? 'Convection is set to a manual value below, so orientation has no effect until you switch back to Auto-calculate.'
+                    : 'Feeds the auto-calculated convection coefficient (leading constant 1.42 vertical vs 1.0 horizontal, same ΔT and characteristic length) — its effect on final temperature is diluted by radiation, which doesn\'t depend on orientation, so the difference is often modest rather than dramatic.'}
+                </span>
               </div>
             </div>
           </div>
@@ -856,7 +870,7 @@ export default function BusbarCalculator() {
                   <div className="step-row" key={s.id}>
                     <div className="bar-index">{i + 1}</div>
                     <div className="field">
-                      <label>Current (A)</label>
+                      <label>Current (A rms)</label>
                       <input autoComplete="off" type="number" min={0} value={s.current} onChange={e => updateStep(s.id, { current: Number(e.target.value) })} />
                     </div>
                     <div className="field">
@@ -1002,7 +1016,7 @@ export default function BusbarCalculator() {
               </div>
               {durationMode === 'continuous' && (
                 <div className="result-tile">
-                  <div className="label">Max continuous current</div>
+                  <div className="label">Max continuous current (rms)</div>
                   <div className="value">{maxCurrent !== null ? fmt(maxCurrent, 0) : '—'}<span className="unit">A</span></div>
                 </div>
               )}
@@ -1022,6 +1036,13 @@ export default function BusbarCalculator() {
                 <div className="result-tile">
                   <div className="label">Total busbar loss</div>
                   <div className="value">{fmt(totalLossW, 1)}<span className="unit">W</span></div>
+                </div>
+              )}
+              {durationMode === 'continuous' && totalResistanceOhm !== undefined && (
+                <div className="result-tile">
+                  <div className="label">Resistance ({currentType === 'ac' ? 'Rac' : 'Rdc'})</div>
+                  <div className="value">{fmt(totalResistanceOhm * 1e6, 1)}<span className="unit">µΩ</span></div>
+                  {nodes.length > 1 && <div className="hint">sum across all {nodes.length} sections</div>}
                 </div>
               )}
               {durationMode !== 'continuous' && totalEnergyJ !== undefined && (
@@ -1129,8 +1150,12 @@ export default function BusbarCalculator() {
       <div className="card" style={{ marginTop: '1.25rem' }}>
         <div className="card-title">Reference &amp; assumptions</div>
         <p className="note">
-          Steady-state and load-profile heating are solved with a nodal thermal network: each section (or the
-          stacked-bar bundle, as one lumped node) generates I²R heat, exchanges heat with neighbouring sections
+          Current is entered as RMS (root-mean-square) throughout — continuous, fault, and every load-profile step —
+          and used directly as I in P = I²·Rac, the standard formula for average AC (or DC) power dissipation in a
+          resistor; no separate peak/RMS conversion is applied or needed, since RMS is defined precisely so that
+          equation gives the correct heating effect. Steady-state and load-profile heating are solved with a nodal
+          thermal network: each section (or the stacked-bar bundle, as one lumped node) generates I²R heat, exchanges
+          heat with neighbouring sections
           by axial conduction (generalised fin equation with internal heat generation, discretised and solved
           with the Thomas algorithm), and loses heat to ambient by natural convection + radiation, in series with
           any coating's conduction resistance (t/(k·A), same generalised-fin-style discretisation). Skin effect
