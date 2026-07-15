@@ -16,6 +16,8 @@
 // vector depth, 0…~1.15) and cos φ the load power factor. The ratio peaks near
 // M ≈ 0.6, reaching ~0.6–0.65 · I_ph,rms — the classic motor-drive result.
 
+import type { DcLinkCapacitor } from './dcLinkCapacitors';
+
 const SQRT3 = Math.sqrt(3);
 
 export interface DcLinkInput {
@@ -218,4 +220,117 @@ export function solveCapBank(inp: CapBankInput): CapBankResult {
     envelopeDmm,
     envelopeHmm: inp.boxHeightMm,
   };
+}
+
+// ── Package optimizer ──────────────────────────────────────────────────────
+// Search the catalog for the smallest bank that meets the required capacitance,
+// ripple current and a hot-spot-temperature target while fitting inside a
+// bounding envelope. For each part the minimum feasible parallel count is found
+// (raising the count above the capacitance/current minimum only if needed to
+// meet the temperature target by lowering the per-cap current), laid out in the
+// most compact grid that fits the envelope, then all parts are ranked by the
+// chosen objective.
+
+export type OptimizeObjective = 'volume' | 'area' | 'count' | 'coolest';
+
+export interface OptimizeInput {
+  requiredCapacitanceUf: number;
+  rippleCurrentRmsA: number;
+  busVoltageV: number;
+  ambientTempC: number;
+  coolingMethod: CoolingMethod;
+  conductionRthCW: number;
+  spacingMm: number;
+  maxWidthMm: number;   // along the box length L (columns); 0 = unconstrained
+  maxDepthMm: number;   // along the box thickness T (rows); 0 = unconstrained
+  maxHeightMm: number;  // box height H; 0 = unconstrained
+  maxHotSpotTempC: number;
+  objective: OptimizeObjective;
+}
+
+export interface OptimizeCandidate {
+  cap: DcLinkCapacitor;
+  count: number;
+  columns: number;
+  rows: number;
+  envelopeWmm: number;
+  envelopeDmm: number;
+  envelopeHmm: number;
+  volumeCm3: number;
+  areaCm2: number;
+  hotSpotTempC: number;
+  totalCapacitanceUf: number;
+  bankEsrMohm: number;
+  lossTotalW: number;
+  capDensityUfPerCm3: number;
+}
+
+function gridHotSpotC(cap: DcLinkCapacitor, count: number, cols: number, rows: number, inp: OptimizeInput): number {
+  const currentPerCap = inp.rippleCurrentRmsA / count;
+  const lossPerCap = currentPerCap * currentPerCap * (cap.esrMohm / 1000);
+  let rth = inp.coolingMethod === 'conduction' ? inp.conductionRthCW : cap.rthCW * coolingMultiplier(inp.coolingMethod);
+  if (inp.coolingMethod !== 'conduction' && count > 1) {
+    rth *= 5 / worstCapExposedFaces(rows, cols, inp.spacingMm);
+  }
+  return inp.ambientTempC + lossPerCap * rth;
+}
+
+export function optimizeDcLinkBank(caps: DcLinkCapacitor[], inp: OptimizeInput): OptimizeCandidate[] {
+  const s = inp.spacingMm;
+  const out: OptimizeCandidate[] = [];
+
+  for (const cap of caps) {
+    if (cap.ratedVoltageVdc < inp.busVoltageV) continue;                 // must survive the bus voltage
+    if (inp.maxHeightMm > 0 && cap.boxHeightMm > inp.maxHeightMm) continue;
+
+    const colsMax = inp.maxWidthMm > 0 ? Math.floor((inp.maxWidthMm + s) / (cap.boxLengthMm + s)) : 1000;
+    const rowsMax = inp.maxDepthMm > 0 ? Math.floor((inp.maxDepthMm + s) / (cap.boxThicknessMm + s)) : 1000;
+    if (colsMax < 1 || rowsMax < 1) continue;                            // a single part doesn't fit
+    const fitCap = colsMax * rowsMax;
+
+    const nCap = cap.capacitanceUf > 0 ? Math.ceil(inp.requiredCapacitanceUf / cap.capacitanceUf) : 1;
+    const nCur = cap.irmsRatedA > 0 ? Math.ceil(inp.rippleCurrentRmsA / cap.irmsRatedA) : 1;
+    const nMin = Math.max(1, nCap, nCur);
+    if (nMin > fitCap) continue;                                         // can't fit enough parts
+
+    // Raise the count from nMin only as far as needed to meet the temperature
+    // target (more parts → lower per-cap current → cooler), bounded by what fits.
+    let chosen: OptimizeCandidate | null = null;
+    for (let n = nMin; n <= Math.min(fitCap, nMin + 60); n++) {
+      let best: { cols: number; rows: number; envW: number; envD: number; hs: number } | null = null;
+      for (let cols = 1; cols <= Math.min(colsMax, n); cols++) {
+        const rows = Math.ceil(n / cols);
+        if (rows > rowsMax) continue;
+        const hs = gridHotSpotC(cap, n, cols, rows, inp);
+        if (hs > inp.maxHotSpotTempC) continue;
+        const envW = cols * cap.boxLengthMm + (cols - 1) * s;
+        const envD = rows * cap.boxThicknessMm + (rows - 1) * s;
+        // Most compact grid at this count (smallest occupied footprint).
+        if (!best || envW * envD < best.envW * best.envD) best = { cols, rows, envW, envD, hs };
+      }
+      if (best) {
+        const volumeCm3 = (best.envW * best.envD * cap.boxHeightMm) / 1000;
+        const totalC = n * cap.capacitanceUf;
+        chosen = {
+          cap, count: n, columns: best.cols, rows: best.rows,
+          envelopeWmm: best.envW, envelopeDmm: best.envD, envelopeHmm: cap.boxHeightMm,
+          volumeCm3, areaCm2: (best.envW * best.envD) / 100,
+          hotSpotTempC: best.hs, totalCapacitanceUf: totalC,
+          bankEsrMohm: cap.esrMohm / n, lossTotalW: Math.pow(inp.rippleCurrentRmsA / n, 2) * (cap.esrMohm / 1000) * n,
+          capDensityUfPerCm3: volumeCm3 > 0 ? totalC / volumeCm3 : 0,
+        };
+        break; // minimum feasible count for this part
+      }
+    }
+    if (chosen) out.push(chosen);
+  }
+
+  const cmp: Record<OptimizeObjective, (a: OptimizeCandidate, b: OptimizeCandidate) => number> = {
+    volume: (a, b) => a.volumeCm3 - b.volumeCm3,
+    area: (a, b) => a.areaCm2 - b.areaCm2,
+    count: (a, b) => a.count - b.count || a.volumeCm3 - b.volumeCm3,
+    coolest: (a, b) => a.hotSpotTempC - b.hotSpotTempC || a.volumeCm3 - b.volumeCm3,
+  };
+  out.sort(cmp[inp.objective]);
+  return out.slice(0, 6);
 }

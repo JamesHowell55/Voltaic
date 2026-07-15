@@ -10,12 +10,12 @@ import PremiumGate from '../components/PremiumGate';
 import InfoTooltip from '../components/InfoTooltip';
 import DcLinkArrayDiagram from '../components/DcLinkArrayDiagram';
 import {
-  CAP_SUPPLIERS, seriesForSupplier, voltagesForSeries, partsFor, leadsFor,
+  CAP_SUPPLIERS, DC_LINK_CAPACITORS, seriesForSupplier, voltagesForSeries, partsFor, leadsFor,
   maxOperatingVoltage, estimateLifeHours, type DcLinkCapacitor,
 } from '../lib/dcLinkCapacitors';
 import {
-  solveDcLinkSizing, solveCapBank, resonanceHz,
-  type DcLinkInput, type CapBankInput, type CoolingMethod,
+  solveDcLinkSizing, solveCapBank, resonanceHz, optimizeDcLinkBank,
+  type DcLinkInput, type CapBankInput, type CoolingMethod, type OptimizeObjective, type OptimizeCandidate,
 } from '../lib/dcLinkPhysics';
 
 function fmt(n: number, digits = 2): string {
@@ -83,6 +83,14 @@ export default function DcLinkCalculator() {
   const [conductionRthCW, setConductionRthCW] = useState(4);
   const [columns, setColumns] = useState(0); // 0 = auto
   const [spacingMm, setSpacingMm] = useState(3);
+
+  // ── Package optimizer ──
+  const [optimizeEnabled, setOptimizeEnabled] = useState(false);
+  const [maxWidthMm, setMaxWidthMm] = useState(200);
+  const [maxDepthMm, setMaxDepthMm] = useState(150);
+  const [maxHeightMm, setMaxHeightMm] = useState(60);
+  const [optMaxHotSpotC, setOptMaxHotSpotC] = useState(85);
+  const [optObjective, setOptObjective] = useState<OptimizeObjective>('volume');
 
   const seriesList = useMemo(() => seriesForSupplier(supplier), [supplier]);
   const voltageList = useMemo(() => voltagesForSeries(supplier, series), [supplier, series]);
@@ -170,6 +178,26 @@ export default function DcLinkCalculator() {
     return { hours, years: hours / 8760, quality: lifeQuality(hours) };
   }, [bank, cap, busVoltageV]);
 
+  const optResults = useMemo(() => {
+    if (!optimizeEnabled || sizing.requiredCapacitanceUf <= 0) return [];
+    return optimizeDcLinkBank(DC_LINK_CAPACITORS, {
+      requiredCapacitanceUf: sizing.requiredCapacitanceUf,
+      rippleCurrentRmsA: sizing.rippleCurrentRmsA,
+      busVoltageV, ambientTempC, coolingMethod, conductionRthCW, spacingMm,
+      maxWidthMm, maxDepthMm, maxHeightMm, maxHotSpotTempC: optMaxHotSpotC, objective: optObjective,
+    });
+  }, [optimizeEnabled, sizing, busVoltageV, ambientTempC, coolingMethod, conductionRthCW, spacingMm, maxWidthMm, maxDepthMm, maxHeightMm, optMaxHotSpotC, optObjective]);
+
+  const applyCandidate = (c: OptimizeCandidate) => {
+    setCapMode('catalog');
+    setSupplier(c.cap.supplier);
+    setSeries(c.cap.series);
+    setVoltageSel(c.cap.ratedVoltageVdc);
+    setLeadsSel(c.cap.leads);
+    setPartNumber(c.cap.partNumber);
+    setColumns(c.columns);
+  };
+
   const actualResonanceHz = useMemo(() => (bank ? resonanceHz(cableInductanceUh * 1e-6, bank.totalCapacitanceUf) : Infinity), [bank, cableInductanceUh]);
   const maxOpV = cap ? maxOperatingVoltage(cap.ratedVoltageVdc, bank?.hotSpotTempC ?? ambientTempC) : 0;
   const hotRow = bank ? Math.min(Math.floor(bank.rows / 2), bank.rows - 1) : 0;
@@ -223,9 +251,11 @@ export default function DcLinkCalculator() {
     capMode, supplier, series, voltageSel, leadsSel, partNumber,
     customCapUf, customRatedV, customEsrMohm, customIrmsA, customRthCW, customLmm, customTmm, customHmm, customPartRef,
     ambientTempC, coolingMethod, conductionRthCW, columns, spacingMm,
+    optimizeEnabled, maxWidthMm, maxDepthMm, maxHeightMm, optMaxHotSpotC, optObjective,
   }), [busVoltageV, rippleVoltagePkPkV, outputFreqHz, switchingFreqKhz, phaseCurrentRmsA, powerFactor, modulationIndex, cableInductanceUh,
     capMode, supplier, series, voltageSel, leadsSel, partNumber, customCapUf, customRatedV, customEsrMohm, customIrmsA, customRthCW, customLmm, customTmm, customHmm, customPartRef,
-    ambientTempC, coolingMethod, conductionRthCW, columns, spacingMm]);
+    ambientTempC, coolingMethod, conductionRthCW, columns, spacingMm,
+    optimizeEnabled, maxWidthMm, maxDepthMm, maxHeightMm, optMaxHotSpotC, optObjective]);
 
   const restoreInputs = useCallback((inp: Record<string, unknown>) => {
     const v = inp as Record<string, any>;
@@ -238,6 +268,8 @@ export default function DcLinkCalculator() {
     set(v.customRthCW, setCustomRthCW); set(v.customLmm, setCustomLmm); set(v.customTmm, setCustomTmm); set(v.customHmm, setCustomHmm); set(v.customPartRef, setCustomPartRef);
     set(v.ambientTempC, setAmbientTempC); set(v.coolingMethod, setCoolingMethod); set(v.conductionRthCW, setConductionRthCW);
     set(v.columns, setColumns); set(v.spacingMm, setSpacingMm);
+    set(v.optimizeEnabled, setOptimizeEnabled); set(v.maxWidthMm, setMaxWidthMm); set(v.maxDepthMm, setMaxDepthMm);
+    set(v.maxHeightMm, setMaxHeightMm); set(v.optMaxHotSpotC, setOptMaxHotSpotC); set(v.optObjective, setOptObjective);
   }, []);
 
   const saved = useSavedCalculations('dc-link');
@@ -481,6 +513,50 @@ export default function DcLinkCalculator() {
               </div>
             </div>
           </div>
+
+          <div className="card">
+            <div className="card-title">
+              <span><span className="step-num">4</span>Package optimizer
+                <InfoTooltip>Search the whole capacitor database for the smallest bank that meets the required capacitance and ripple current and stays under a hot-spot-temperature target, while fitting inside a bounding envelope. Each candidate part is sized to its minimum feasible parallel count (raised only if needed to stay cool) in the most compact grid that fits.</InfoTooltip>
+              </span>
+            </div>
+            <div className="field">
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <input type="checkbox" checked={optimizeEnabled} onChange={(e) => setOptimizeEnabled(e.target.checked)} style={{ width: 'auto' }} />
+                Propose an optimum bank
+              </label>
+            </div>
+            {optimizeEnabled && (
+              <div className="grid grid-2">
+                <div className="field">
+                  <label>Max width ({lenUnit})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(maxWidthMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setMaxWidthMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
+                  <span className="hint">0 = unconstrained.</span>
+                </div>
+                <div className="field">
+                  <label>Max depth / length ({lenUnit})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(maxDepthMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setMaxDepthMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
+                </div>
+                <div className="field">
+                  <label>Max height ({lenUnit})</label>
+                  <input autoComplete="off" type="number" min={0} value={toDisplay(maxHeightMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setMaxHeightMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
+                </div>
+                <div className="field">
+                  <label>Max hot-spot ({tempUnit})</label>
+                  <input autoComplete="off" type="number" value={toDisplay(optMaxHotSpotC, unitSystem, UNIT_TEMP)} onChange={(e) => setOptMaxHotSpotC(fromDisplay(Number(e.target.value), unitSystem, UNIT_TEMP))} />
+                </div>
+                <div className="field" style={{ gridColumn: '1 / -1' }}>
+                  <label>Optimise for</label>
+                  <select value={optObjective} onChange={(e) => setOptObjective(e.target.value as OptimizeObjective)}>
+                    <option value="volume">Smallest volume</option>
+                    <option value="area">Smallest board area</option>
+                    <option value="count">Fewest capacitors</option>
+                    <option value="coolest">Lowest hot-spot temp</option>
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* RIGHT — results */}
@@ -541,6 +617,45 @@ export default function DcLinkCalculator() {
               )}
             </div>
           </div>
+
+          {optimizeEnabled && (
+            <div className="card">
+              <div className="card-title">
+                <span>Proposed banks
+                  <InfoTooltip>Ranked by your objective — each row is a different capacitor sized to its smallest bank that fits the envelope and stays under the hot-spot limit. "Use" applies it to the selection above.</InfoTooltip>
+                </span>
+              </div>
+              {optResults.length === 0 ? (
+                <p className="note" style={{ margin: 0 }}>No catalog part meets the capacitance, current and temperature within the given envelope. Loosen the envelope, raise the hot-spot limit, improve cooling, or widen the spacing.</p>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Capacitor</th><th>N</th><th>Grid</th>
+                        <th>Envelope ({lenUnit})</th><th>Vol (cm³)</th><th>Hot spot</th><th>Total C</th><th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {optResults.map((c, i) => (
+                        <tr key={c.cap.partNumber} className={i === 0 ? 'pass' : undefined}>
+                          <td style={{ whiteSpace: 'nowrap' }}>{c.cap.supplier} {c.cap.series}<br /><span style={{ color: 'var(--text-3)', fontSize: '0.72rem' }}>{fmt(c.cap.capacitanceUf, c.cap.capacitanceUf < 10 ? 2 : 0)} µF · {c.cap.partNumber}</span></td>
+                          <td>{c.count}</td>
+                          <td>{c.rows}×{c.columns}</td>
+                          <td>{fmtU(c.envelopeWmm, unitSystem, UNIT_LENGTH, 0)}×{fmtU(c.envelopeDmm, unitSystem, UNIT_LENGTH, 0)}×{fmtU(c.envelopeHmm, unitSystem, UNIT_LENGTH, 0)}</td>
+                          <td>{fmt(c.volumeCm3, 0)}</td>
+                          <td>{fmtU(c.hotSpotTempC, unitSystem, UNIT_TEMP, 0)}{tempUnit}</td>
+                          <td>{fmt(c.totalCapacitanceUf, 0)} µF</td>
+                          <td><button className="btn small" onClick={() => applyCandidate(c)}>Use</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <span className="hint">Best per {optObjective === 'volume' ? 'smallest volume' : optObjective === 'area' ? 'smallest board area' : optObjective === 'count' ? 'fewest capacitors' : 'lowest hot-spot'} highlighted. Density of the top pick: {fmt(optResults[0].capDensityUfPerCm3, 2)} µF/cm³, ESR {fmt(optResults[0].bankEsrMohm, 3)} mΩ, loss {fmt(optResults[0].lossTotalW, 1)} W.</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {bank && cap && (
             <div className="card">
