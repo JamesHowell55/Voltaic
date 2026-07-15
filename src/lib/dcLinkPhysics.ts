@@ -105,6 +105,7 @@ export interface CapBankInput {
   capUf: number;
   ratedVoltageVdc: number;
   esrMohm: number;
+  eslNh: number;
   irmsRatedA: number;
   rthCW: number;               // single freely-cooled part, HS→ambient
   boxLengthMm: number;
@@ -123,6 +124,8 @@ export interface CapBankResult {
   countForCurrent: number;
   totalCapacitanceUf: number;
   bankEsrMohm: number;         // parallel ESR
+  bankEslNh: number;           // parallel ESL (interconnect not included)
+  bankMassG: number;           // estimated bank mass
   currentPerCapA: number;
   lossPerCapW: number;
   lossTotalW: number;
@@ -167,6 +170,8 @@ export function solveCapBank(inp: CapBankInput): CapBankResult {
 
   const totalCapacitanceUf = count * inp.capUf;
   const bankEsrMohm = inp.esrMohm / count;
+  const bankEslNh = inp.eslNh / count;
+  const bankMassG = count * ((inp.boxLengthMm * inp.boxThicknessMm * inp.boxHeightMm) / 1000) * CAP_MASS_DENSITY_G_PER_CM3;
   const currentPerCapA = inp.rippleCurrentRmsA / count;
   const lossPerCapW = Math.pow(currentPerCapA, 2) * (inp.esrMohm / 1000);
   const lossTotalW = lossPerCapW * count;
@@ -205,6 +210,8 @@ export function solveCapBank(inp: CapBankInput): CapBankResult {
     countForCurrent,
     totalCapacitanceUf,
     bankEsrMohm,
+    bankEslNh,
+    bankMassG,
     currentPerCapA,
     lossPerCapW,
     lossTotalW,
@@ -231,12 +238,23 @@ export function solveCapBank(inp: CapBankInput): CapBankResult {
 // most compact grid that fits the envelope, then all parts are ranked by the
 // chosen objective.
 
-export type OptimizeObjective = 'volume' | 'area' | 'count' | 'coolest';
+export type OptimizeObjective = 'volume' | 'area' | 'count' | 'coolest' | 'mass';
+
+// Effective packaged density of a box-type metallized-PP-film DC-link capacitor
+// (film + resin fill + plastic box + terminals), used to estimate mass from the
+// box envelope volume. ~1.35 g/cm³ is representative and calibrated against
+// typical published part weights; disclosed as an estimate.
+export const CAP_MASS_DENSITY_G_PER_CM3 = 1.35;
+
+export function capMassG(cap: DcLinkCapacitor): number {
+  const boxVolCm3 = (cap.boxLengthMm * cap.boxThicknessMm * cap.boxHeightMm) / 1000;
+  return boxVolCm3 * CAP_MASS_DENSITY_G_PER_CM3;
+}
 
 export interface OptimizeInput {
   requiredCapacitanceUf: number;
   rippleCurrentRmsA: number;
-  busVoltageV: number;
+  peakVoltageV: number;        // V_dc + ripple/2 — the rating must exceed this
   ambientTempC: number;
   coolingMethod: CoolingMethod;
   conductionRthCW: number;
@@ -258,9 +276,11 @@ export interface OptimizeCandidate {
   envelopeHmm: number;
   volumeCm3: number;
   areaCm2: number;
+  massG: number;
   hotSpotTempC: number;
   totalCapacitanceUf: number;
   bankEsrMohm: number;
+  bankEslNh: number;
   lossTotalW: number;
   capDensityUfPerCm3: number;
 }
@@ -280,7 +300,7 @@ export function optimizeDcLinkBank(caps: DcLinkCapacitor[], inp: OptimizeInput):
   const out: OptimizeCandidate[] = [];
 
   for (const cap of caps) {
-    if (cap.ratedVoltageVdc < inp.busVoltageV) continue;                 // must survive the bus voltage
+    if (cap.ratedVoltageVdc < inp.peakVoltageV) continue;                // rating must exceed the peak (DC + ripple/2)
     if (inp.maxHeightMm > 0 && cap.boxHeightMm > inp.maxHeightMm) continue;
 
     const colsMax = inp.maxWidthMm > 0 ? Math.floor((inp.maxWidthMm + s) / (cap.boxLengthMm + s)) : 1000;
@@ -314,9 +334,10 @@ export function optimizeDcLinkBank(caps: DcLinkCapacitor[], inp: OptimizeInput):
         chosen = {
           cap, count: n, columns: best.cols, rows: best.rows,
           envelopeWmm: best.envW, envelopeDmm: best.envD, envelopeHmm: cap.boxHeightMm,
-          volumeCm3, areaCm2: (best.envW * best.envD) / 100,
+          volumeCm3, areaCm2: (best.envW * best.envD) / 100, massG: n * capMassG(cap),
           hotSpotTempC: best.hs, totalCapacitanceUf: totalC,
-          bankEsrMohm: cap.esrMohm / n, lossTotalW: Math.pow(inp.rippleCurrentRmsA / n, 2) * (cap.esrMohm / 1000) * n,
+          bankEsrMohm: cap.esrMohm / n, bankEslNh: cap.eslNh / n,
+          lossTotalW: Math.pow(inp.rippleCurrentRmsA / n, 2) * (cap.esrMohm / 1000) * n,
           capDensityUfPerCm3: volumeCm3 > 0 ? totalC / volumeCm3 : 0,
         };
         break; // minimum feasible count for this part
@@ -330,6 +351,7 @@ export function optimizeDcLinkBank(caps: DcLinkCapacitor[], inp: OptimizeInput):
     area: (a, b) => a.areaCm2 - b.areaCm2,
     count: (a, b) => a.count - b.count || a.volumeCm3 - b.volumeCm3,
     coolest: (a, b) => a.hotSpotTempC - b.hotSpotTempC || a.volumeCm3 - b.volumeCm3,
+    mass: (a, b) => a.massG - b.massG,
   };
   out.sort(cmp[inp.objective]);
   return out.slice(0, 6);

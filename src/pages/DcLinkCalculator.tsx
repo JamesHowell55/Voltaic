@@ -70,6 +70,7 @@ export default function DcLinkCalculator() {
   const [customCapUf, setCustomCapUf] = useState(80);
   const [customRatedV, setCustomRatedV] = useState(500);
   const [customEsrMohm, setCustomEsrMohm] = useState(1.8);
+  const [customEslNh, setCustomEslNh] = useState(20);
   const [customIrmsA, setCustomIrmsA] = useState(32);
   const [customRthCW, setCustomRthCW] = useState(14);
   const [customLmm, setCustomLmm] = useState(42);
@@ -133,7 +134,7 @@ export default function DcLinkCalculator() {
     if (capMode === 'custom') {
       return {
         partNumber: customPartRef || 'Custom',
-        capacitanceUf: customCapUf, ratedVoltageVdc: customRatedV, esrMohm: customEsrMohm,
+        capacitanceUf: customCapUf, ratedVoltageVdc: customRatedV, esrMohm: customEsrMohm, eslNh: customEslNh,
         irmsRatedA: customIrmsA, rthCW: customRthCW,
         boxLengthMm: customLmm, boxThicknessMm: customTmm, boxHeightMm: customHmm,
       };
@@ -141,11 +142,15 @@ export default function DcLinkCalculator() {
     if (!catalogPart) return null;
     return {
       partNumber: catalogPart.partNumber, capacitanceUf: catalogPart.capacitanceUf,
-      ratedVoltageVdc: catalogPart.ratedVoltageVdc, esrMohm: catalogPart.esrMohm,
+      ratedVoltageVdc: catalogPart.ratedVoltageVdc, esrMohm: catalogPart.esrMohm, eslNh: catalogPart.eslNh,
       irmsRatedA: catalogPart.irmsRatedA, rthCW: catalogPart.rthCW,
       boxLengthMm: catalogPart.boxLengthMm, boxThicknessMm: catalogPart.boxThicknessMm, boxHeightMm: catalogPart.boxHeightMm,
     };
-  }, [capMode, catalogPart, customPartRef, customCapUf, customRatedV, customEsrMohm, customIrmsA, customRthCW, customLmm, customTmm, customHmm]);
+  }, [capMode, catalogPart, customPartRef, customCapUf, customRatedV, customEsrMohm, customEslNh, customIrmsA, customRthCW, customLmm, customTmm, customHmm]);
+
+  // Peak capacitor voltage = DC bus + half the pk-pk ripple. Datasheets state the
+  // peak voltage (DC + superimposed ripple) must not exceed the rated voltage.
+  const peakVoltageV = busVoltageV + rippleVoltagePkPkV / 2;
 
   const sizingInput: DcLinkInput = useMemo(() => ({
     busVoltageV, rippleVoltagePkPkV, outputFreqHz,
@@ -163,7 +168,7 @@ export default function DcLinkCalculator() {
       rippleCurrentRmsA: sizing.rippleCurrentRmsA,
       busVoltageV,
       ambientTempC,
-      capUf: cap.capacitanceUf, ratedVoltageVdc: cap.ratedVoltageVdc, esrMohm: cap.esrMohm,
+      capUf: cap.capacitanceUf, ratedVoltageVdc: cap.ratedVoltageVdc, esrMohm: cap.esrMohm, eslNh: cap.eslNh,
       irmsRatedA: cap.irmsRatedA, rthCW: cap.rthCW,
       boxLengthMm: cap.boxLengthMm, boxThicknessMm: cap.boxThicknessMm, boxHeightMm: cap.boxHeightMm,
       columns, spacingMm, coolingMethod, conductionRthCW,
@@ -183,10 +188,10 @@ export default function DcLinkCalculator() {
     return optimizeDcLinkBank(DC_LINK_CAPACITORS, {
       requiredCapacitanceUf: sizing.requiredCapacitanceUf,
       rippleCurrentRmsA: sizing.rippleCurrentRmsA,
-      busVoltageV, ambientTempC, coolingMethod, conductionRthCW, spacingMm,
+      peakVoltageV, ambientTempC, coolingMethod, conductionRthCW, spacingMm,
       maxWidthMm, maxDepthMm, maxHeightMm, maxHotSpotTempC: optMaxHotSpotC, objective: optObjective,
     });
-  }, [optimizeEnabled, sizing, busVoltageV, ambientTempC, coolingMethod, conductionRthCW, spacingMm, maxWidthMm, maxDepthMm, maxHeightMm, optMaxHotSpotC, optObjective]);
+  }, [optimizeEnabled, sizing, peakVoltageV, ambientTempC, coolingMethod, conductionRthCW, spacingMm, maxWidthMm, maxDepthMm, maxHeightMm, optMaxHotSpotC, optObjective]);
 
   const applyCandidate = (c: OptimizeCandidate) => {
     setCapMode('catalog');
@@ -207,13 +212,16 @@ export default function DcLinkCalculator() {
   const checks = useMemo(() => {
     const out: { severity: 'pass' | 'warn' | 'fail'; label: string; detail: string }[] = [];
     if (!cap || !bank) return out;
-    // Voltage rating
-    if (busVoltageV > cap.ratedVoltageVdc) {
-      out.push({ severity: 'fail', label: 'Voltage rating', detail: `Bus ${fmt(busVoltageV, 0)} V exceeds the capacitor's ${fmt(cap.ratedVoltageVdc, 0)} V rating. Choose a higher-voltage part.` });
-    } else if (busVoltageV > 0.8 * cap.ratedVoltageVdc) {
-      out.push({ severity: 'warn', label: 'Voltage derating', detail: `Bus ${fmt(busVoltageV, 0)} V is above 80% of the ${fmt(cap.ratedVoltageVdc, 0)} V rating — film-cap life is much longer at ≤0.8×V_rated. Max at this hot-spot temp ≈ ${fmt(maxOpV, 0)} V.` });
+    // Voltage rating — governed by the PEAK voltage (DC bus + ½·ripple), which
+    // the datasheets state must not exceed the rated voltage.
+    if (peakVoltageV > cap.ratedVoltageVdc) {
+      out.push({ severity: 'fail', label: 'Voltage rating', detail: `Peak voltage ${fmt(peakVoltageV, 0)} V (bus ${fmt(busVoltageV, 0)} V + ½ ripple) exceeds the capacitor's ${fmt(cap.ratedVoltageVdc, 0)} V rating — the datasheet requires the peak (DC + ripple) to stay within V_rated. Choose a higher-voltage part.` });
+    } else if (peakVoltageV > maxOpV) {
+      out.push({ severity: 'warn', label: 'Voltage rating (hot)', detail: `Peak voltage ${fmt(peakVoltageV, 0)} V exceeds the temperature-derated limit ≈ ${fmt(maxOpV, 0)} V at ${fmt(bank.hotSpotTempC, 0)}°C hot spot (above 85°C the allowed voltage derates below V_rated). Reduce temperature or use a higher-voltage part.` });
+    } else if (peakVoltageV > 0.8 * cap.ratedVoltageVdc) {
+      out.push({ severity: 'warn', label: 'Voltage derating', detail: `Peak voltage ${fmt(peakVoltageV, 0)} V is above 80% of the ${fmt(cap.ratedVoltageVdc, 0)} V rating — within limits (surge to 1.5×V_rated is allowed only occasionally), but film-cap life is much longer at ≤0.8×V_rated.` });
     } else {
-      out.push({ severity: 'pass', label: 'Voltage rating', detail: `Bus ${fmt(busVoltageV, 0)} V vs ${fmt(cap.ratedVoltageVdc, 0)} V rated (${fmt((busVoltageV / cap.ratedVoltageVdc) * 100, 0)}% — good headroom).` });
+      out.push({ severity: 'pass', label: 'Voltage rating', detail: `Peak ${fmt(peakVoltageV, 0)} V (bus ${fmt(busVoltageV, 0)} V + ½ ripple) vs ${fmt(cap.ratedVoltageVdc, 0)} V rated (${fmt((peakVoltageV / cap.ratedVoltageVdc) * 100, 0)}% — good headroom).` });
     }
     // Hot spot
     if (bank.hotSpotTempC > 105) {
@@ -239,7 +247,7 @@ export default function DcLinkCalculator() {
       }
     }
     return out;
-  }, [cap, bank, busVoltageV, maxOpV, switchingFreqKhz, cableInductanceUh, actualResonanceHz]);
+  }, [cap, bank, busVoltageV, peakVoltageV, maxOpV, switchingFreqKhz, cableInductanceUh, actualResonanceHz]);
 
   const overallPass = checks.every((c) => c.severity !== 'fail');
   const failing = checks.filter((c) => c.severity === 'fail');
@@ -249,7 +257,7 @@ export default function DcLinkCalculator() {
   const getInputs = useCallback((): Record<string, unknown> => ({
     busVoltageV, rippleVoltagePkPkV, outputFreqHz, switchingFreqKhz, phaseCurrentRmsA, powerFactor, modulationIndex, cableInductanceUh,
     capMode, supplier, series, voltageSel, leadsSel, partNumber,
-    customCapUf, customRatedV, customEsrMohm, customIrmsA, customRthCW, customLmm, customTmm, customHmm, customPartRef,
+    customCapUf, customRatedV, customEsrMohm, customEslNh, customIrmsA, customRthCW, customLmm, customTmm, customHmm, customPartRef,
     ambientTempC, coolingMethod, conductionRthCW, columns, spacingMm,
     optimizeEnabled, maxWidthMm, maxDepthMm, maxHeightMm, optMaxHotSpotC, optObjective,
   }), [busVoltageV, rippleVoltagePkPkV, outputFreqHz, switchingFreqKhz, phaseCurrentRmsA, powerFactor, modulationIndex, cableInductanceUh,
@@ -264,7 +272,7 @@ export default function DcLinkCalculator() {
     set(v.switchingFreqKhz, setSwitchingFreqKhz); set(v.phaseCurrentRmsA, setPhaseCurrentRmsA); set(v.powerFactor, setPowerFactor);
     set(v.modulationIndex, setModulationIndex); set(v.cableInductanceUh, setCableInductanceUh);
     set(v.capMode, setCapMode); set(v.supplier, setSupplier); set(v.series, setSeries); set(v.voltageSel, setVoltageSel); set(v.leadsSel, setLeadsSel); set(v.partNumber, setPartNumber);
-    set(v.customCapUf, setCustomCapUf); set(v.customRatedV, setCustomRatedV); set(v.customEsrMohm, setCustomEsrMohm); set(v.customIrmsA, setCustomIrmsA);
+    set(v.customCapUf, setCustomCapUf); set(v.customRatedV, setCustomRatedV); set(v.customEsrMohm, setCustomEsrMohm); set(v.customEslNh, setCustomEslNh); set(v.customIrmsA, setCustomIrmsA);
     set(v.customRthCW, setCustomRthCW); set(v.customLmm, setCustomLmm); set(v.customTmm, setCustomTmm); set(v.customHmm, setCustomHmm); set(v.customPartRef, setCustomPartRef);
     set(v.ambientTempC, setAmbientTempC); set(v.coolingMethod, setCoolingMethod); set(v.conductionRthCW, setConductionRthCW);
     set(v.columns, setColumns); set(v.spacingMm, setSpacingMm);
@@ -348,8 +356,10 @@ export default function DcLinkCalculator() {
       { label: 'Required capacitance', value: `${fmt(sizing.requiredCapacitanceUf, 0)} µF (${sizing.governedBy})` },
     ];
     if (bank && cap) {
+      rows.push({ label: 'Peak capacitor voltage', value: `${fmt(peakVoltageV, 0)} V (bus ${fmt(busVoltageV, 0)} + ½ ripple) vs ${fmt(cap.ratedVoltageVdc, 0)} V rated` });
       rows.push({ label: 'Capacitor count', value: `${bank.count} × ${fmt(cap.capacitanceUf, 0)} µF = ${fmt(bank.totalCapacitanceUf, 0)} µF` });
-      rows.push({ label: 'Bank ESR', value: `${fmt(bank.bankEsrMohm, 3)} mΩ` });
+      rows.push({ label: 'Bank ESR / ESL', value: `${fmt(bank.bankEsrMohm, 3)} mΩ / ${fmt(bank.bankEslNh, 1)} nH` });
+      rows.push({ label: 'Estimated bank mass', value: `${fmt(bank.bankMassG, 0)} g` });
       rows.push({ label: 'Loss (per cap / total)', value: `${fmt(bank.lossPerCapW, 2)} W / ${fmt(bank.lossTotalW, 1)} W` });
       rows.push({ label: 'Worst-case hot spot', value: `${fmt(bank.hotSpotTempC, 0)}°C (${fmt(bank.hotSpotRiseC, 0)}°C rise)` });
       rows.push({ label: 'Envelope (W×D×H)', value: `${fmt(bank.envelopeWmm, 0)}×${fmt(bank.envelopeDmm, 0)}×${fmt(bank.envelopeHmm, 0)} mm (${bank.rows}×${bank.columnsUsed})` });
@@ -359,7 +369,7 @@ export default function DcLinkCalculator() {
       { heading: 'Sizing & bank', rows },
       { heading: 'Checks', rows: checks.map((c) => ({ label: `${c.severity === 'pass' ? '✓' : c.severity === 'warn' ? '⚠' : '✗'} ${c.label}`, value: c.detail })) },
     ];
-  }, [sizing, bank, cap, life, checks]);
+  }, [sizing, bank, cap, life, checks, peakVoltageV, busVoltageV]);
 
   const handleExportPdf = () => {
     exportReportToPdf({
@@ -467,6 +477,7 @@ export default function DcLinkCalculator() {
                 <div className="field"><label>Capacitance (µF)</label>{seriesNum(customCapUf, setCustomCapUf, { step: 1, min: 0.1 })}</div>
                 <div className="field"><label>Rated voltage (VDC)</label>{seriesNum(customRatedV, setCustomRatedV, { step: 10, min: 1 })}</div>
                 <div className="field"><label>ESR (mΩ)</label>{seriesNum(customEsrMohm, setCustomEsrMohm, { step: 0.1, min: 0.01 })}</div>
+                <div className="field"><label>ESL (nH)</label>{seriesNum(customEslNh, setCustomEslNh, { step: 1, min: 0 })}</div>
                 <div className="field"><label>Irms rating (A)</label>{seriesNum(customIrmsA, setCustomIrmsA, { step: 1, min: 0.1 })}</div>
                 <div className="field"><label>Thermal resistance Rth (°C/W)</label>{seriesNum(customRthCW, setCustomRthCW, { step: 0.5, min: 0.1 })}</div>
                 <div className="field"><label>Part number (reference)</label><input autoComplete="off" value={customPartRef} onChange={(e) => setCustomPartRef(e.target.value)} placeholder="e.g. supplier P/N" /></div>
@@ -551,6 +562,7 @@ export default function DcLinkCalculator() {
                     <option value="volume">Smallest volume</option>
                     <option value="area">Smallest board area</option>
                     <option value="count">Fewest capacitors</option>
+                    <option value="mass">Lowest mass</option>
                     <option value="coolest">Lowest hot-spot temp</option>
                   </select>
                 </div>
@@ -588,6 +600,11 @@ export default function DcLinkCalculator() {
                 <div className="label">Required capacitance</div>
                 <div className="value">{fmt(sizing.requiredCapacitanceUf, 0)}<span className="unit">µF</span></div>
                 <div className="hint">governed by {sizing.governedBy}</div>
+              </div>
+              <div className="result-tile">
+                <div className="label">Peak capacitor voltage<InfoTooltip>DC bus + ½ the pk-pk ripple. The datasheets require the peak voltage (DC + superimposed ripple) to stay within the rated voltage — so the ripple pushes the required voltage rating up, not just the DC bus.</InfoTooltip></div>
+                <div className={`value ${cap && peakVoltageV > cap.ratedVoltageVdc ? 'neg' : cap && peakVoltageV > 0.8 * cap.ratedVoltageVdc ? 'warn' : 'pos'}`}>{fmt(peakVoltageV, 0)}<span className="unit">V</span></div>
+                <div className="hint">{fmt(busVoltageV, 0)} V bus + {fmt(rippleVoltagePkPkV / 2, 1)} V{cap ? ` · rating ${fmt(cap.ratedVoltageVdc, 0)} V` : ''}</div>
               </div>
               {bank && cap && (
                 <>
@@ -633,7 +650,7 @@ export default function DcLinkCalculator() {
                     <thead>
                       <tr>
                         <th>Capacitor</th><th>N</th><th>Grid</th>
-                        <th>Envelope ({lenUnit})</th><th>Vol (cm³)</th><th>Hot spot</th><th>Total C</th><th></th>
+                        <th>Envelope ({lenUnit})</th><th>Vol (cm³)</th><th>Mass (g)</th><th>Hot spot</th><th>Total C</th><th></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -644,6 +661,7 @@ export default function DcLinkCalculator() {
                           <td>{c.rows}×{c.columns}</td>
                           <td>{fmtU(c.envelopeWmm, unitSystem, UNIT_LENGTH, 0)}×{fmtU(c.envelopeDmm, unitSystem, UNIT_LENGTH, 0)}×{fmtU(c.envelopeHmm, unitSystem, UNIT_LENGTH, 0)}</td>
                           <td>{fmt(c.volumeCm3, 0)}</td>
+                          <td>{fmt(c.massG, 0)}</td>
                           <td>{fmtU(c.hotSpotTempC, unitSystem, UNIT_TEMP, 0)}{tempUnit}</td>
                           <td>{fmt(c.totalCapacitanceUf, 0)} µF</td>
                           <td><button className="btn small" onClick={() => applyCandidate(c)}>Use</button></td>
@@ -651,7 +669,7 @@ export default function DcLinkCalculator() {
                       ))}
                     </tbody>
                   </table>
-                  <span className="hint">Best per {optObjective === 'volume' ? 'smallest volume' : optObjective === 'area' ? 'smallest board area' : optObjective === 'count' ? 'fewest capacitors' : 'lowest hot-spot'} highlighted. Density of the top pick: {fmt(optResults[0].capDensityUfPerCm3, 2)} µF/cm³, ESR {fmt(optResults[0].bankEsrMohm, 3)} mΩ, loss {fmt(optResults[0].lossTotalW, 1)} W.</span>
+                  <span className="hint">Best per {optObjective === 'volume' ? 'smallest volume' : optObjective === 'area' ? 'smallest board area' : optObjective === 'count' ? 'fewest capacitors' : optObjective === 'mass' ? 'lowest mass' : 'lowest hot-spot'} highlighted. Top pick: {fmt(optResults[0].capDensityUfPerCm3, 2)} µF/cm³, ESR {fmt(optResults[0].bankEsrMohm, 3)} mΩ, ESL {fmt(optResults[0].bankEslNh, 1)} nH, {fmt(optResults[0].massG, 0)} g, loss {fmt(optResults[0].lossTotalW, 1)} W.</span>
                 </div>
               )}
             </div>
@@ -671,6 +689,8 @@ export default function DcLinkCalculator() {
                   <tr><td>Grid</td><td>{bank.rows} rows × {bank.columnsUsed} cols ({bank.count} caps{bank.lastRowCount !== bank.columnsUsed ? `, last row ${bank.lastRowCount}` : ''})</td></tr>
                   <tr><td>Envelope W × D × H</td><td>{fmtU(bank.envelopeWmm, unitSystem, UNIT_LENGTH, 1)} × {fmtU(bank.envelopeDmm, unitSystem, UNIT_LENGTH, 1)} × {fmtU(bank.envelopeHmm, unitSystem, UNIT_LENGTH, 1)} {lenUnit}</td></tr>
                   <tr><td>Worst-case cap cooling</td><td>{fmt(bank.exposedFaceEq, 1)} of 5 faces exposed → Rth ×{fmt(5 / bank.exposedFaceEq, 2)}</td></tr>
+                  <tr><td>Bank ESR / ESL</td><td>{fmt(bank.bankEsrMohm, 3)} mΩ / {fmt(bank.bankEslNh, 1)} nH <span className="hint">(N in parallel; interconnect/busbar adds to ESL)</span></td></tr>
+                  <tr><td>Estimated bank mass</td><td>{fmt(bank.bankMassG, 0)} g ({fmt(bank.bankMassG / 1000, 2)} kg) <span className="hint">≈ box volume × 1.35 g/cm³</span></td></tr>
                   <tr><td>Total stored energy</td><td>{fmt(0.5 * bank.totalCapacitanceUf * 1e-6 * busVoltageV * busVoltageV, 1)} J</td></tr>
                 </tbody>
               </table>
@@ -686,6 +706,16 @@ export default function DcLinkCalculator() {
       <div className="card" style={{ marginTop: '1.25rem' }}>
         <div className="card-title">Reference &amp; assumptions</div>
         <p className="note">
+          Voltage rating: the capacitor's rated voltage is a PEAK limit for the (non-reversing) DC-link waveform —
+          the KEMET datasheet states "the peak voltage shall not exceed the rated voltage VNDC," and TDK defines its
+          rated voltage as the maximum operating peak voltage. So the governing voltage is V_peak = V_bus + ½·ΔV_pp
+          (the ripple pushes the required rating up, not just the DC bus), and above 85 °C the permissible voltage
+          derates below the rating (linear to ~0.7×V_rated at 105 °C). Occasional surges to ~1.5×V_rated are allowed
+          (limited cycles), but continuous operation at ≤0.8×V_rated greatly extends life. Bank mass is estimated from
+          the box envelope volume at an effective packaged density of 1.35 g/cm³ (film + resin + box + terminals) —
+          an approximation; use the datasheet weight for precise figures. Bank ESR and ESL are the N-in-parallel
+          combinations of the per-part values; real bank ESL is dominated by the busbar/interconnect layout, which is
+          not included. {' '}
           The DC-link RMS ripple current uses the Kolar &amp; Round closed-form expression (IEE Proc. Electr. Power
           Appl., 2006, Eq. 28) for a three-phase voltage-source PWM inverter with sinusoidal output current and a
           constant DC-link voltage; it peaks near modulation index M ≈ 0.6 at roughly 0.6–0.65 × the RMS phase current.
