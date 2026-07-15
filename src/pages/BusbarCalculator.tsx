@@ -79,9 +79,13 @@ export default function BusbarCalculator() {
   const [barGap, setBarGap] = useState(10);
   const [bundleLengthM, setBundleLengthM] = useState(1);
 
-  // Bulk-mode: an arbitrary conductor described only by extracted/measured
-  // resistance (at 20°C), conductor volume, and total exposed surface area.
+  // Bulk-mode: an arbitrary conductor described only by conductor volume, total
+  // exposed surface area, and its resistance — either entered directly (from a
+  // field solver / measurement) or inferred from the current-path length using
+  // the selected material (R20 = ρ20·L²/V, i.e. an equivalent uniform prism).
+  const [bulkResistanceMode, setBulkResistanceMode] = useState<'fromLength' | 'enter'>('fromLength');
   const [bulkResistance20uOhm, setBulkResistance20uOhm] = useState(72);
+  const [bulkPathLengthMm, setBulkPathLengthMm] = useState(100);
   const [bulkVolumeCm3, setBulkVolumeCm3] = useState(18);
   const [bulkSurfaceAreaCm2, setBulkSurfaceAreaCm2] = useState(150);
 
@@ -168,7 +172,7 @@ export default function BusbarCalculator() {
   const getInputs = useCallback((): Record<string, unknown> => ({
     busbarType, sections: sections.map(s => ({ width: s.width, length: s.length, coolingEnabled: !!s.coolingEnabled, coatedEnabled: s.coatedEnabled ?? true })),
     thicknessMm, profileWidth, profileThickness, nBars, barGap, bundleLengthM,
-    bulkResistance20uOhm, bulkVolumeCm3, bulkSurfaceAreaCm2,
+    bulkResistanceMode, bulkResistance20uOhm, bulkPathLengthMm, bulkVolumeCm3, bulkSurfaceAreaCm2,
     materialId, orientation, emissivity, convMode, manualHValue,
     coatingPresetId, coatingThicknessMm, coatingConductivity,
     timPresetId, timThicknessMm, timConductivity,
@@ -180,7 +184,7 @@ export default function BusbarCalculator() {
     maxContinuousTempC, maxFaultTempC,
   }), [
     busbarType, sections, thicknessMm, profileWidth, profileThickness, nBars, barGap, bundleLengthM,
-    bulkResistance20uOhm, bulkVolumeCm3, bulkSurfaceAreaCm2,
+    bulkResistanceMode, bulkResistance20uOhm, bulkPathLengthMm, bulkVolumeCm3, bulkSurfaceAreaCm2,
     materialId, orientation, emissivity, convMode, manualHValue,
     coatingPresetId, coatingThicknessMm, coatingConductivity,
     timPresetId, timThicknessMm, timConductivity,
@@ -200,7 +204,9 @@ export default function BusbarCalculator() {
     if (v.nBars != null) setNBars(v.nBars);
     if (v.barGap != null) setBarGap(v.barGap);
     if (v.bundleLengthM != null) setBundleLengthM(v.bundleLengthM);
+    if (v.bulkResistanceMode) setBulkResistanceMode(v.bulkResistanceMode);
     if (v.bulkResistance20uOhm != null) setBulkResistance20uOhm(v.bulkResistance20uOhm);
+    if (v.bulkPathLengthMm != null) setBulkPathLengthMm(v.bulkPathLengthMm);
     if (v.bulkVolumeCm3 != null) setBulkVolumeCm3(v.bulkVolumeCm3);
     if (v.bulkSurfaceAreaCm2 != null) setBulkSurfaceAreaCm2(v.bulkSurfaceAreaCm2);
     if (v.materialId) setMaterialId(v.materialId);
@@ -264,11 +270,22 @@ export default function BusbarCalculator() {
   const effFrequency = currentType === 'ac' ? frequency : 0;
   const manualH = convMode === 'manual' ? manualHValue : null;
 
+  // Bulk-mode resistance at 20°C (Ω): either the entered value, or inferred from
+  // the current-path length and volume as an equivalent uniform prism,
+  // R20 = ρ20·L²/V. The uniform assumption makes this a LOWER bound on the true
+  // resistance — a part that necks down runs a higher resistance than this.
+  const bulkResistance20Ohm = useMemo(() => {
+    if (bulkResistanceMode === 'enter') return bulkResistance20uOhm * 1e-6;
+    const volumeM3 = bulkVolumeCm3 * 1e-6;
+    const lengthM = bulkPathLengthMm / 1000;
+    return volumeM3 > 0 ? (resistivityAt(material, 20) * lengthM * lengthM) / volumeM3 : 0;
+  }, [bulkResistanceMode, bulkResistance20uOhm, bulkPathLengthMm, bulkVolumeCm3, material]);
+
   const nodes = useMemo(() => {
     if (busbarType === 'single') return buildSingleBusbarNodes(sections, thicknessMm);
-    if (busbarType === 'bulk') return buildBulkNode(bulkResistance20uOhm * 1e-6, bulkVolumeCm3 * 1e-6, bulkSurfaceAreaCm2 * 1e-4, resistivityAt(material, 20));
+    if (busbarType === 'bulk') return buildBulkNode(bulkResistance20Ohm, bulkVolumeCm3 * 1e-6, bulkSurfaceAreaCm2 * 1e-4, resistivityAt(material, 20));
     return buildMultipleBarNodes(profileWidth, profileThickness, nBars, barGap, bundleLengthM);
-  }, [busbarType, sections, thicknessMm, profileWidth, profileThickness, nBars, barGap, bundleLengthM, bulkResistance20uOhm, bulkVolumeCm3, bulkSurfaceAreaCm2, material]);
+  }, [busbarType, sections, thicknessMm, profileWidth, profileThickness, nBars, barGap, bundleLengthM, bulkResistance20Ohm, bulkVolumeCm3, bulkSurfaceAreaCm2, material]);
 
   // Bulk mode: skip the IEC skin factor — a measured/CAD-extracted resistance
   // already embeds any AC (skin/proximity) effect, so re-applying it double-counts.
@@ -457,7 +474,12 @@ export default function BusbarCalculator() {
       sections.forEach((s, i) => geoRows.push({ label: `Section ${i + 1}`, value: `${fmtU(s.width, unitSystem, UNIT_LENGTH, 3)} × ${fmtU(s.length, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}${coatingThicknessMm > 0 && !(s.coatedEnabled ?? true) ? ' (uncoated)' : ''}` }));
       geoRows.push({ label: 'Common thickness', value: `${fmtU(thicknessMm, unitSystem, UNIT_LENGTH, 3)} ${unitLabel(unitSystem, UNIT_LENGTH)}` });
     } else if (busbarType === 'bulk') {
-      geoRows.push({ label: 'Resistance at 20°C (entered)', value: `${fmt(bulkResistance20uOhm, 2)} µΩ` });
+      if (bulkResistanceMode === 'fromLength') {
+        geoRows.push({ label: 'Current-path length', value: `${fmtU(bulkPathLengthMm, unitSystem, UNIT_LENGTH, 2)} ${unitLabel(unitSystem, UNIT_LENGTH)}` });
+        geoRows.push({ label: 'Resistance at 20°C (inferred)', value: `${fmt(bulkResistance20Ohm * 1e6, 2)} µΩ (${material.name}, uniform-section)` });
+      } else {
+        geoRows.push({ label: 'Resistance at 20°C (entered)', value: `${fmt(bulkResistance20uOhm, 2)} µΩ` });
+      }
       geoRows.push({ label: 'Conductor volume', value: `${fmt(bulkVolumeCm3, 2)} cm³` });
       geoRows.push({ label: 'Exposed surface area', value: `${fmt(bulkSurfaceAreaCm2, 1)} cm²` });
     } else {
@@ -513,7 +535,7 @@ export default function BusbarCalculator() {
     }
 
     return sectionsOut;
-  }, [busbarType, sections, thicknessMm, profileWidth, profileThickness, nBars, barGap, bundleLengthM, bulkResistance20uOhm, bulkVolumeCm3, bulkSurfaceAreaCm2, orientation, material, emissivity, convMode, manualHValue, coatingThicknessMm, coatingConductivity, currentType, durationMode, current, frequency, ambientC, maxContinuousTempC, faultDurationS, faultInitialTempC, maxFaultTempC, steps, anySectionCooled, timThicknessMm, timConductivity, metalMaterialId, metalThicknessMm, metalConductivity, coolantPresetId, coolantSpecificHeat, coolantDensity, coolantFlowRateLPerMin, coolantInletTempC, unitSystem]);
+  }, [busbarType, sections, thicknessMm, profileWidth, profileThickness, nBars, barGap, bundleLengthM, bulkResistanceMode, bulkResistance20uOhm, bulkPathLengthMm, bulkResistance20Ohm, bulkVolumeCm3, bulkSurfaceAreaCm2, orientation, material, emissivity, convMode, manualHValue, coatingThicknessMm, coatingConductivity, currentType, durationMode, current, frequency, ambientC, maxContinuousTempC, faultDurationS, faultInitialTempC, maxFaultTempC, steps, anySectionCooled, timThicknessMm, timConductivity, metalMaterialId, metalThicknessMm, metalConductivity, coolantPresetId, coolantSpecificHeat, coolantDensity, coolantFlowRateLPerMin, coolantInletTempC, unitSystem]);
 
   const outputSections: ReportSection[] = useMemo(() => {
     const headline: ReportRow[] = [
@@ -706,16 +728,36 @@ export default function BusbarCalculator() {
               </>
             ) : busbarType === 'bulk' ? (
               <>
-                <div className="grid grid-2">
-                  <div className="field">
-                    <label>Resistance at 20°C (µΩ)</label>
-                    <input autoComplete="off" type="number" min={0.0001} step={0.1} value={bulkResistance20uOhm} onChange={e => setBulkResistance20uOhm(Number(e.target.value))} />
-                    <span className="hint">DC or AC resistance of the whole conductor — paste the value your field solver (e.g. Q3D) or measurement gives.</span>
+                <div className="field">
+                  <label>Resistance</label>
+                  <div className="segmented">
+                    <button className={bulkResistanceMode === 'fromLength' ? 'active' : ''} onClick={() => setBulkResistanceMode('fromLength')}>From path length</button>
+                    <button className={bulkResistanceMode === 'enter' ? 'active' : ''} onClick={() => setBulkResistanceMode('enter')}>Enter value</button>
                   </div>
+                  <span className="hint">
+                    {bulkResistanceMode === 'fromLength'
+                      ? 'No external tool needed — the resistance is computed from the selected material, the volume, and the current-path length below.'
+                      : 'Paste a resistance from a field solver (e.g. Q3D) or a measurement.'}
+                  </span>
+                </div>
+                <div className="grid grid-2">
+                  {bulkResistanceMode === 'enter' ? (
+                    <div className="field">
+                      <label>Resistance at 20°C (µΩ)</label>
+                      <input autoComplete="off" type="number" min={0.0001} step={0.1} value={bulkResistance20uOhm} onChange={e => setBulkResistance20uOhm(Number(e.target.value))} />
+                      <span className="hint">DC or AC resistance of the whole conductor.</span>
+                    </div>
+                  ) : (
+                    <div className="field">
+                      <label>Current-path length ({unitLabel(unitSystem, UNIT_LENGTH)})</label>
+                      <input autoComplete="off" type="number" min={0.001} value={toDisplay(bulkPathLengthMm, unitSystem, UNIT_LENGTH)} onChange={e => setBulkPathLengthMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} />
+                      <span className="hint">Centreline distance the current travels, terminal to terminal — measure it in CAD. Inferred R₂₀ ≈ {fmt(bulkResistance20Ohm * 1e6, 1)} µΩ ({material.name}).</span>
+                    </div>
+                  )}
                   <div className="field">
                     <label>Conductor volume (cm³)</label>
                     <input autoComplete="off" type="number" min={0.0001} step={0.1} value={bulkVolumeCm3} onChange={e => setBulkVolumeCm3(Number(e.target.value))} />
-                    <span className="hint">Solid metal volume from CAD (mass properties) — sets the thermal mass and nominal current density.</span>
+                    <span className="hint">Solid metal volume from CAD (mass properties) — sets the thermal mass{bulkResistanceMode === 'fromLength' ? ' and, with the path length, the resistance' : ' and nominal current density'}.</span>
                   </div>
                   <div className="field" style={{ gridColumn: '1 / -1' }}>
                     <label>Total exposed surface area (cm²)</label>
@@ -724,10 +766,11 @@ export default function BusbarCalculator() {
                   </div>
                 </div>
                 <span className="hint" style={{ display: 'block', marginTop: '0.4rem' }}>
-                  A single equivalent conductor is synthesised to reproduce both the entered resistance and the volume exactly.
-                  The AC skin factor is not re-applied (your entered resistance already includes it). For natural convection the
-                  characteristic length is taken as the cube-root of the volume — set a manual convection coefficient below if you
-                  have a CFD-derived film value.
+                  A single equivalent conductor is synthesised to reproduce both the resistance and the volume exactly.
+                  {bulkResistanceMode === 'fromLength'
+                    ? ' Inferring R from length assumes a uniform cross-section (A = V/L), so it is a lower bound — a part that necks down runs a higher resistance and hotter. The AC skin factor is not added.'
+                    : ' The AC skin factor is not re-applied (your entered resistance already includes it).'}
+                  {' '}For natural convection the characteristic length is taken as the cube-root of the volume — set a manual convection coefficient below if you have a CFD-derived film value.
                 </span>
               </>
             ) : (
