@@ -736,3 +736,174 @@ export function renderSkinDepthCrossSectionSvg(radiusMm: number, skinDepthMmValu
     <text x="${W / 2}" y="${H - 10}" text-anchor="middle" font-size="9.5" fill="${TEXT_FAINT}" font-family="ui-monospace, monospace">round conductor, cross-section &middot; only the &#948;:r ratio is to scale</text>
   </svg>`;
 }
+
+// ── Beam bending: schematic + shear/moment/deflection charts, matching
+// BeamDiagram.tsx / BeamResponseChart.tsx's layout logic with literal colors. ──
+
+export interface PdfBeamSupport {
+  x: number;
+  kind: 'pin' | 'roller' | 'fixed';
+}
+
+export interface PdfBeamLoad {
+  kind: 'point-force' | 'point-moment' | 'distributed';
+  position: number;
+  endPosition: number;
+  magnitude: number;
+  endMagnitude: number;
+}
+
+export function renderBeamSchematicSvg(length: number, supports: PdfBeamSupport[], loads: PdfBeamLoad[], accentColor: string): string {
+  const W = 760;
+  const H = 300;
+  const MARGIN = 56;
+  const BEAM_THICKNESS = 10;
+  const LOAD_ARROW_H = 44;
+  const SUPPORT_SIZE = 20;
+  if (length <= 0) {
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%"><text x="${W / 2}" y="${H / 2}" text-anchor="middle" fill="${TEXT_FAINT}" font-size="13">No beam</text></svg>`;
+  }
+
+  const scale = (W - 2 * MARGIN) / length;
+  const beamY = 128;
+  const toPx = (x: number) => MARGIN + x * scale;
+
+  const pointLoads = loads.filter(l => l.kind === 'point-force');
+  const momentLoads = loads.filter(l => l.kind === 'point-moment');
+  const distLoads = loads.filter(l => l.kind === 'distributed');
+  const maxPointMag = Math.max(1, ...pointLoads.map(l => Math.abs(l.magnitude)));
+  const maxDistMag = Math.max(1, ...distLoads.flatMap(l => [Math.abs(l.magnitude), Math.abs(l.endMagnitude)]));
+
+  const supportsHtml = supports.map(s => {
+    const x = toPx(s.x);
+    if (s.kind === 'fixed') {
+      const isLeft = s.x <= length / 2;
+      const hatchX = isLeft ? x - 14 : x;
+      return `
+        <line x1="${x}" y1="${beamY - 22}" x2="${x}" y2="${beamY + 22}" stroke="${BORDER_STRONG}" stroke-width="2.5" />
+        <rect x="${hatchX}" y="${beamY - 22}" width="14" height="44" fill="url(#pdfBeamFixedHatch)" stroke="${BORDER_STRONG}" stroke-width="1" />`;
+    }
+    const triY = beamY + BEAM_THICKNESS / 2;
+    const rollerHtml = s.kind === 'roller' ? `
+        <circle cx="${x - 6}" cy="${triY + SUPPORT_SIZE + 5}" r="3.5" fill="white" stroke="${TEXT_2}" stroke-width="1.2" />
+        <circle cx="${x + 6}" cy="${triY + SUPPORT_SIZE + 5}" r="3.5" fill="white" stroke="${TEXT_2}" stroke-width="1.2" />
+        <line x1="${x - 12}" y1="${triY + SUPPORT_SIZE + 9}" x2="${x + 12}" y2="${triY + SUPPORT_SIZE + 9}" stroke="${TEXT_2}" stroke-width="1.2" />` : '';
+    return `
+        <path d="M${x},${triY} L${x - SUPPORT_SIZE / 2},${triY + SUPPORT_SIZE} L${x + SUPPORT_SIZE / 2},${triY + SUPPORT_SIZE} Z" fill="white" stroke="${TEXT_2}" stroke-width="1.5" />
+        ${rollerHtml}`;
+  }).join('');
+
+  const pointLoadsHtml = pointLoads.map(l => {
+    const x = toPx(l.position);
+    const h = LOAD_ARROW_H * (0.5 + 0.5 * (Math.abs(l.magnitude) / maxPointMag));
+    const yTop = beamY - BEAM_THICKNESS / 2 - h;
+    return `
+        <line x1="${x}" y1="${yTop}" x2="${x}" y2="${beamY - BEAM_THICKNESS / 2 - 3}" stroke="${NEG}" stroke-width="2" marker-end="url(#pdfBeamArrowDown)" />
+        <text x="${x}" y="${yTop - 5}" text-anchor="middle" font-size="10.5" font-weight="700" fill="${NEG}" font-family="ui-monospace, monospace">${fmtNum(l.magnitude)} N</text>`;
+  }).join('');
+
+  const momentLoadsHtml = momentLoads.map(l => {
+    const x = toPx(l.position);
+    const r = 16;
+    const sweep = l.magnitude >= 0 ? 1 : 0;
+    return `
+        <path d="M${x - r},${beamY - BEAM_THICKNESS / 2 - 20} A${r},${r} 0 1,${sweep} ${x + r},${beamY - BEAM_THICKNESS / 2 - 20}" fill="none" stroke="${WARN}" stroke-width="2" marker-end="url(#pdfBeamArrowMoment)" />
+        <text x="${x}" y="${beamY - BEAM_THICKNESS / 2 - 42}" text-anchor="middle" font-size="10.5" font-weight="700" fill="${WARN}" font-family="ui-monospace, monospace">${fmtNum(l.magnitude)} N&middot;mm</text>`;
+  }).join('');
+
+  const distLoadsHtml = distLoads.map(l => {
+    const xa = toPx(l.position);
+    const xb = toPx(l.endPosition);
+    const ha = LOAD_ARROW_H * 0.35 + LOAD_ARROW_H * 0.55 * (Math.abs(l.magnitude) / maxDistMag);
+    const hb = LOAD_ARROW_H * 0.35 + LOAD_ARROW_H * 0.55 * (Math.abs(l.endMagnitude) / maxDistMag);
+    const arrowCount = Math.max(3, Math.min(9, Math.round((xb - xa) / 26)));
+    const topY = (h: number) => beamY - BEAM_THICKNESS / 2 - h;
+    const arrows = Array.from({ length: arrowCount }, (_, k) => {
+      const t = arrowCount === 1 ? 0 : k / (arrowCount - 1);
+      const x = xa + t * (xb - xa);
+      const h = ha + t * (hb - ha);
+      return `<line x1="${x}" y1="${topY(h)}" x2="${x}" y2="${beamY - BEAM_THICKNESS / 2 - 3}" stroke="${NEG}" stroke-width="1.5" marker-end="url(#pdfBeamArrowDown)" opacity="0.85" />`;
+    }).join('');
+    return `
+        <path d="M${xa},${topY(ha)} L${xb},${topY(hb)}" stroke="${NEG}" stroke-width="1.25" fill="none" />
+        ${arrows}
+        <text x="${xa}" y="${topY(ha) - 6}" text-anchor="middle" font-size="9.5" font-weight="700" fill="${NEG}" font-family="ui-monospace, monospace">${fmtNum(l.magnitude)}</text>
+        <text x="${xb}" y="${topY(hb) - 6}" text-anchor="middle" font-size="9.5" font-weight="700" fill="${NEG}" font-family="ui-monospace, monospace">${fmtNum(l.endMagnitude)}</text>
+        <text x="${(xa + xb) / 2}" y="${topY(Math.max(ha, hb)) - 20}" text-anchor="middle" font-size="9" fill="${TEXT_FAINT}" font-family="ui-monospace, monospace">N/mm</text>`;
+  }).join('');
+
+  const dimY = beamY + SUPPORT_SIZE + 34;
+
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%">
+    <defs>
+      <marker id="pdfBeamArrowDown" markerWidth="8" markerHeight="8" refX="4" refY="7" orient="auto"><path d="M0,0 L8,0 L4,8 Z" fill="${NEG}" /></marker>
+      <marker id="pdfBeamArrowMoment" markerWidth="7" markerHeight="7" refX="3.5" refY="3.5" orient="auto-start-reverse"><path d="M0,0 L7,3.5 L0,7 Z" fill="${WARN}" /></marker>
+      <pattern id="pdfBeamFixedHatch" width="8" height="8" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+        <rect width="8" height="8" fill="#FAFBFA" /><line x1="0" y1="0" x2="0" y2="8" stroke="${BORDER_STRONG}" stroke-width="2" />
+      </pattern>
+    </defs>
+    <rect x="${toPx(0)}" y="${beamY - BEAM_THICKNESS / 2}" width="${length * scale}" height="${BEAM_THICKNESS}" rx="2" fill="color-mix(in srgb, ${accentColor} 12%, white)" stroke="${accentColor}" stroke-width="1.5" />
+    ${supportsHtml}
+    ${pointLoadsHtml}
+    ${momentLoadsHtml}
+    ${distLoadsHtml}
+    <g font-size="9.5" fill="${TEXT_2}" font-family="ui-monospace, monospace">
+      <line x1="${toPx(0)}" y1="${dimY - 6}" x2="${toPx(0)}" y2="${dimY}" stroke="${BORDER_STRONG}" stroke-width="1" />
+      <line x1="${toPx(length)}" y1="${dimY - 6}" x2="${toPx(length)}" y2="${dimY}" stroke="${BORDER_STRONG}" stroke-width="1" />
+      <line x1="${toPx(0)}" y1="${dimY}" x2="${toPx(length)}" y2="${dimY}" stroke="${BORDER_STRONG}" stroke-width="1" />
+      <text x="${(toPx(0) + toPx(length)) / 2}" y="${dimY + 15}" text-anchor="middle">L = ${length} mm</text>
+    </g>
+    <text x="${W / 2}" y="${H - 8}" text-anchor="middle" font-size="10" fill="${TEXT_FAINT}" font-family="ui-monospace, monospace">loads shown positive-downward &middot; not to scale</text>
+  </svg>`;
+}
+
+export function renderBeamResponseChartSvg(xs: number[], values: number[], color: string, unit: string, valueLabel: string, decimals = 1): string {
+  const W = 900;
+  const H = 260;
+  const MARGIN = { left: 66, right: 20, top: 16, bottom: 34 };
+  const PLOT_W = W - MARGIN.left - MARGIN.right;
+  const PLOT_H = H - MARGIN.top - MARGIN.bottom;
+  if (xs.length === 0) return `<svg viewBox="0 0 ${W} ${H}" width="100%"></svg>`;
+
+  const xMax = Math.max(...xs, 0.001);
+  const rawMin = Math.min(...values, 0);
+  const rawMax = Math.max(...values, 0);
+  const pad = Math.max((rawMax - rawMin) * 0.12, Math.abs(rawMax || rawMin || 1) * 0.05, 1e-9);
+  const yMin = rawMin - pad;
+  const yMax = rawMax + pad;
+  const xScale = (x: number) => MARGIN.left + (x / xMax) * PLOT_W;
+  const yScale = (v: number) => MARGIN.top + (1 - (v - yMin) / (yMax - yMin)) * PLOT_H;
+  const zeroY = yScale(0);
+
+  const pxXs = xs.map(xScale);
+  const pxYs = values.map(yScale);
+  const linePath = pxXs.map((x, i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${pxYs[i].toFixed(1)}`).join(' ');
+  const areaPath = `${linePath} L${pxXs[pxXs.length - 1].toFixed(1)},${zeroY.toFixed(1)} L${pxXs[0].toFixed(1)},${zeroY.toFixed(1)} Z`;
+
+  const yTicksCount = 4;
+  const yTicks = Array.from({ length: yTicksCount + 1 }, (_, i) => yMin + ((yMax - yMin) / yTicksCount) * i);
+  const xTicksCount = 5;
+  const xTicks = Array.from({ length: xTicksCount + 1 }, (_, i) => (xMax / xTicksCount) * i);
+
+  const gridHtml = yTicks.map(t => `<line x1="${MARGIN.left}" x2="${W - MARGIN.right}" y1="${yScale(t)}" y2="${yScale(t)}" stroke="#EBEDEA" stroke-width="1" />`).join('');
+  const yLabelsHtml = yTicks.map(t => `<text x="${MARGIN.left - 8}" y="${yScale(t) + 3}" text-anchor="end" font-size="9.5" fill="${TEXT_2}" font-family="ui-monospace, monospace">${t.toFixed(decimals)}</text>`).join('');
+  const xLabelsHtml = xTicks.map(t => `<text x="${xScale(t)}" y="${H - MARGIN.bottom + 16}" text-anchor="middle" font-size="9.5" fill="${TEXT_FAINT}" font-family="ui-monospace, monospace">${t.toFixed(0)}</text>`).join('');
+
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%">
+    ${gridHtml}
+    <path d="${areaPath}" fill="${color}" opacity="0.12" />
+    <line x1="${MARGIN.left}" x2="${W - MARGIN.right}" y1="${zeroY}" y2="${zeroY}" stroke="${TEXT_FAINT}" stroke-width="1" stroke-dasharray="3,3" />
+    <path d="${linePath}" fill="none" stroke="${color}" stroke-width="1.9" />
+    <line x1="${MARGIN.left}" x2="${MARGIN.left}" y1="${MARGIN.top}" y2="${H - MARGIN.bottom}" stroke="${BORDER_STRONG}" stroke-width="1" />
+    <line x1="${MARGIN.left}" x2="${W - MARGIN.right}" y1="${H - MARGIN.bottom}" y2="${H - MARGIN.bottom}" stroke="${BORDER_STRONG}" stroke-width="1" />
+    ${yLabelsHtml}
+    <text x="14" y="${MARGIN.top - 4}" font-size="9.5" fill="${TEXT_2}" font-family="ui-monospace, monospace">${unit}</text>
+    ${xLabelsHtml}
+    <text x="${(MARGIN.left + W - MARGIN.right) / 2}" y="${H - 6}" text-anchor="middle" font-size="10" fill="${TEXT_FAINT}" font-family="ui-monospace, monospace">x (mm)</text>
+    <text x="${W - MARGIN.right - 4}" y="${MARGIN.top + 12}" text-anchor="end" font-size="10" fill="${color}" font-family="ui-monospace, monospace">${valueLabel}</text>
+  </svg>`;
+}
+
+function fmtNum(n: number): string {
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}

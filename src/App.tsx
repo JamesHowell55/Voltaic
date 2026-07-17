@@ -5,6 +5,7 @@ import Home from './pages/Home';
 import BusbarCalculator from './pages/BusbarCalculator';
 import CreepageClearanceCalculator from './pages/CreepageClearanceCalculator';
 import BoltedJointCalculator from './pages/BoltedJointCalculator';
+import BeamCalculator from './pages/BeamCalculator';
 import CableWireSizingCalculator from './pages/CableWireSizingCalculator';
 import BatteryPackSeriesParallelCalculator from './pages/BatteryPackSeriesParallelCalculator';
 import MotorTorquePowerSpeedCalculator from './pages/MotorTorquePowerSpeedCalculator';
@@ -51,6 +52,7 @@ function App() {
               <Route path="/busbar" element={<BusbarCalculator />} />
               <Route path="/creepage-clearance" element={<CreepageClearanceCalculator />} />
               <Route path="/bolted-joint" element={<BoltedJointCalculator />} />
+              <Route path="/beam-bending" element={<BeamCalculator />} />
               <Route path="/o-ring" element={<ORingCalculator />} />
               <Route path="/fits-and-limits" element={<FitsAndLimitsCalculator />} />
               <Route path="/cable-sizing" element={<CableWireSizingCalculator />} />

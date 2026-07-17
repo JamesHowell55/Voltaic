@@ -40,6 +40,7 @@ const SHORT_DESCRIPTIONS: Record<string, string> = {
   '/speed-torque-power': 'Solve torque, power, or speed from the other two.',
   '/id-iq-current': 'Id/Iq decomposition and MTPA for PMSM FOC.',
   '/battery-pack-series-parallel': 'Pack voltage, capacity, and voltage sag under load.',
+  '/beam-bending': 'Reactions, shear, moment, and deflection for any beam and load combination.',
   '/bolted-joint': 'Preload, torque, and yield checks to VDI 2230.',
   '/o-ring': 'Gland design to the Trelleborg guide and AS568/ISO 3601.',
   '/fits-and-limits': 'Interference-fit stresses to ISO 286 and Lamé theory.',

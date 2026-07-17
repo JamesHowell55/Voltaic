@@ -45,6 +45,17 @@ export const lbfInToNm = (lbfIn: number): number => lbfIn * NM_PER_LBFIN;
 export const nPerMmToLbfPerIn = (k: number): number => k * NPERMM_PER_LBFPERIN;
 export const lbfPerInToNPerMm = (k: number): number => k / NPERMM_PER_LBFPERIN;
 
+// N·mm <-> lbf·in — distinct from UNIT_TORQUE (N·m/lbf·in) because beam
+// bending moments here are naturally expressed in N·mm, matching UNIT_LENGTH's
+// mm (not UNIT_LENGTH_M's m) as this app's base length unit.
+const NMM_PER_LBFIN = NM_PER_LBFIN * 1000;
+export const nmmToLbfIn = (nmm: number): number => nmm / NMM_PER_LBFIN;
+export const lbfInToNmm = (lbfIn: number): number => lbfIn * NMM_PER_LBFIN;
+
+const MM4_PER_IN4 = MM_PER_IN ** 4;
+export const mm4ToIn4 = (mm4: number): number => mm4 / MM4_PER_IN4;
+export const in4ToMm4 = (in4: number): number => in4 * MM4_PER_IN4;
+
 // Absolute temperature (has a zero-offset — NOT the same as a temperature delta).
 export const cToF = (c: number): number => (c * 9) / 5 + 32;
 export const fToC = (f: number): number => ((f - 32) * 5) / 9;
@@ -73,6 +84,8 @@ export const UNIT_STRESS: UnitDef = { siLabel: 'MPa', imperialLabel: 'ksi', toIm
 export const UNIT_MODULUS: UnitDef = { siLabel: 'GPa', imperialLabel: 'Mpsi', toImperial: gpaToMpsi, toSI: mpsiToGpa };
 export const UNIT_TORQUE: UnitDef = { siLabel: 'N·m', imperialLabel: 'lbf·in', toImperial: nmToLbfIn, toSI: lbfInToNm };
 export const UNIT_STIFFNESS: UnitDef = { siLabel: 'N/mm', imperialLabel: 'lbf/in', toImperial: nPerMmToLbfPerIn, toSI: lbfPerInToNPerMm };
+export const UNIT_MOMENT: UnitDef = { siLabel: 'N·mm', imperialLabel: 'lbf·in', toImperial: nmmToLbfIn, toSI: lbfInToNmm };
+export const UNIT_AREA_MOMENT: UnitDef = { siLabel: 'mm⁴', imperialLabel: 'in⁴', toImperial: mm4ToIn4, toSI: in4ToMm4 };
 export const UNIT_TEMP: UnitDef = { siLabel: '°C', imperialLabel: '°F', toImperial: cToF, toSI: fToC };
 export const UNIT_TEMP_DELTA: UnitDef = { siLabel: '°C', imperialLabel: '°F', toImperial: cDeltaToFDelta, toSI: fDeltaToCDelta };
 export const UNIT_CTE: UnitDef = { siLabel: '×10⁻⁶/°C', imperialLabel: '×10⁻⁶/°F', toImperial: ctePerCToPerF, toSI: ctePerFToPerC };
