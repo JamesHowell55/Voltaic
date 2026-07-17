@@ -356,3 +356,58 @@ export function optimizeDcLinkBank(caps: DcLinkCapacitor[], inp: OptimizeInput):
   out.sort(cmp[inp.objective]);
   return out.slice(0, 6);
 }
+
+// ── Switching overshoot ────────────────────────────────────────────────────
+// When a switch turns off, the current through it collapses at a rate di/dt.
+// The parasitic commutation-loop inductance L_loop (busbar + capacitor ESL +
+// module stray) resists that change and produces a voltage spike ΔV = L·di/dt
+// on top of the DC bus. The DEVICE sees the full loop spike (V_bus + L_loop·di/dt
+// — the main driver of the required device voltage margin); the CAPACITOR sees
+// only the part developed across its own ESL (ESL_bank·di/dt), added to the DC
+// bus and ripple. Because this repeats every switching cycle it must stay within
+// the rated voltage (the 1.5×V_rated surge allowance is for rare events only).
+
+const MU0 = 4 * Math.PI * 1e-7;
+
+/** Parallel-plate laminated-busbar loop inductance (go + return conductors):
+ *  L = µ0 · separation · length / width. Returns nH. */
+export function busbarLoopInductanceNh(lengthMm: number, widthMm: number, separationMm: number): number {
+  if (widthMm <= 0) return 0;
+  const L = MU0 * (separationMm / 1000) * (lengthMm / 1000) / (widthMm / 1000);
+  return L * 1e9;
+}
+
+export interface OvershootInput {
+  busVoltageV: number;
+  rippleVoltagePkPkV: number;
+  loopInductanceNh: number;  // total commutation-loop inductance
+  bankEslNh: number;         // capacitor-bank ESL (part of the loop; sets the cap-terminal spike)
+  diDtAPerUs: number;        // turn-off current slew rate
+}
+
+export interface OvershootResult {
+  diDtAPerUs: number;
+  overshootDeviceV: number;   // L_loop · di/dt
+  devicePeakV: number;        // V_bus + overshoot
+  capTerminalSpikeV: number;  // ESL_bank · di/dt
+  capPeakTransientV: number;  // V_bus + ½·ripple + cap-terminal spike
+}
+
+export function solveSwitchingOvershoot(inp: OvershootInput): OvershootResult {
+  const diDt = inp.diDtAPerUs * 1e6; // A/s
+  const overshootDeviceV = (inp.loopInductanceNh * 1e-9) * diDt;
+  const capSpike = (inp.bankEslNh * 1e-9) * diDt;
+  return {
+    diDtAPerUs: inp.diDtAPerUs,
+    overshootDeviceV,
+    devicePeakV: inp.busVoltageV + overshootDeviceV,
+    capTerminalSpikeV: capSpike,
+    capPeakTransientV: inp.busVoltageV + inp.rippleVoltagePkPkV / 2 + capSpike,
+  };
+}
+
+/** di/dt from the commutated current and the device current fall time. A/µs. */
+export function diDtFromFallTime(switchedCurrentA: number, fallTimeNs: number): number {
+  if (fallTimeNs <= 0) return 0;
+  return (switchedCurrentA / fallTimeNs) * 1000; // A/ns → A/µs
+}

@@ -15,6 +15,7 @@ import {
 } from '../lib/dcLinkCapacitors';
 import {
   solveDcLinkSizing, solveCapBank, resonanceHz, optimizeDcLinkBank,
+  busbarLoopInductanceNh, solveSwitchingOvershoot, diDtFromFallTime,
   type DcLinkInput, type CapBankInput, type CoolingMethod, type OptimizeObjective, type OptimizeCandidate,
 } from '../lib/dcLinkPhysics';
 
@@ -92,6 +93,18 @@ export default function DcLinkCalculator() {
   const [maxHeightMm, setMaxHeightMm] = useState(60);
   const [optMaxHotSpotC, setOptMaxHotSpotC] = useState(85);
   const [optObjective, setOptObjective] = useState<OptimizeObjective>('volume');
+
+  // ── Switching overshoot ──
+  const [loopMode, setLoopMode] = useState<'direct' | 'geometry'>('direct');
+  const [loopInductanceNh, setLoopInductanceNh] = useState(30);
+  const [busbarLenMm, setBusbarLenMm] = useState(100);
+  const [busbarWidthMm, setBusbarWidthMm] = useState(50);
+  const [busbarSepMm, setBusbarSepMm] = useState(1);
+  const [moduleEslNh, setModuleEslNh] = useState(15);
+  const [didtMode, setDidtMode] = useState<'derived' | 'direct'>('derived');
+  const [switchedCurrentA, setSwitchedCurrentA] = useState(283);
+  const [fallTimeNs, setFallTimeNs] = useState(30);
+  const [didtDirectAPerUs, setDidtDirectAPerUs] = useState(6000);
 
   const seriesList = useMemo(() => seriesForSupplier(supplier), [supplier]);
   const voltageList = useMemo(() => voltagesForSeries(supplier, series), [supplier, series]);
@@ -203,6 +216,18 @@ export default function DcLinkCalculator() {
     setColumns(c.columns);
   };
 
+  // Switching overshoot: the commutation-loop inductance (entered, or from
+  // busbar geometry + module ESL + the cap bank ESL) times the turn-off di/dt.
+  const bankEslNh = bank?.bankEslNh ?? 0;
+  const loopInductanceTotalNh = loopMode === 'geometry'
+    ? busbarLoopInductanceNh(busbarLenMm, busbarWidthMm, busbarSepMm) + moduleEslNh + bankEslNh
+    : loopInductanceNh;
+  const diDtAPerUs = didtMode === 'derived' ? diDtFromFallTime(switchedCurrentA, fallTimeNs) : didtDirectAPerUs;
+  const overshoot = useMemo(() => solveSwitchingOvershoot({
+    busVoltageV, rippleVoltagePkPkV, loopInductanceNh: loopInductanceTotalNh, bankEslNh, diDtAPerUs,
+  }), [busVoltageV, rippleVoltagePkPkV, loopInductanceTotalNh, bankEslNh, diDtAPerUs]);
+  const busbarOnlyNh = loopMode === 'geometry' ? busbarLoopInductanceNh(busbarLenMm, busbarWidthMm, busbarSepMm) : 0;
+
   const actualResonanceHz = useMemo(() => (bank ? resonanceHz(cableInductanceUh * 1e-6, bank.totalCapacitanceUf) : Infinity), [bank, cableInductanceUh]);
   const maxOpV = cap ? maxOperatingVoltage(cap.ratedVoltageVdc, bank?.hotSpotTempC ?? ambientTempC) : 0;
   const hotRow = bank ? Math.min(Math.floor(bank.rows / 2), bank.rows - 1) : 0;
@@ -246,8 +271,15 @@ export default function DcLinkCalculator() {
         out.push({ severity: 'pass', label: 'Cable resonance', detail: `LC resonance ${fmt(actualResonanceHz, 0)} Hz is well below the ${fmt(fsw, 0)} Hz switching frequency.` });
       }
     }
+    // Switching overshoot at the capacitor terminals (repetitive — every cycle,
+    // so it must stay within the rated voltage, not rely on the surge allowance).
+    if (overshoot.capPeakTransientV > cap.ratedVoltageVdc) {
+      out.push({ severity: 'fail', label: 'Switching overshoot (cap)', detail: `The repetitive cap-terminal peak ${fmt(overshoot.capPeakTransientV, 0)} V (bus + ripple + ESL·di/dt) exceeds the ${fmt(cap.ratedVoltageVdc, 0)} V rating. Lower the bank ESL, reduce di/dt, or use a higher-voltage part.` });
+    } else if (overshoot.capPeakTransientV > 0.9 * cap.ratedVoltageVdc) {
+      out.push({ severity: 'warn', label: 'Switching overshoot (cap)', detail: `The repetitive cap-terminal peak ${fmt(overshoot.capPeakTransientV, 0)} V is within 10% of the ${fmt(cap.ratedVoltageVdc, 0)} V rating once the switching overshoot is added.` });
+    }
     return out;
-  }, [cap, bank, busVoltageV, peakVoltageV, maxOpV, switchingFreqKhz, cableInductanceUh, actualResonanceHz]);
+  }, [cap, bank, busVoltageV, peakVoltageV, maxOpV, switchingFreqKhz, cableInductanceUh, actualResonanceHz, overshoot]);
 
   const overallPass = checks.every((c) => c.severity !== 'fail');
   const failing = checks.filter((c) => c.severity === 'fail');
@@ -260,10 +292,12 @@ export default function DcLinkCalculator() {
     customCapUf, customRatedV, customEsrMohm, customEslNh, customIrmsA, customRthCW, customLmm, customTmm, customHmm, customPartRef,
     ambientTempC, coolingMethod, conductionRthCW, columns, spacingMm,
     optimizeEnabled, maxWidthMm, maxDepthMm, maxHeightMm, optMaxHotSpotC, optObjective,
+    loopMode, loopInductanceNh, busbarLenMm, busbarWidthMm, busbarSepMm, moduleEslNh, didtMode, switchedCurrentA, fallTimeNs, didtDirectAPerUs,
   }), [busVoltageV, rippleVoltagePkPkV, outputFreqHz, switchingFreqKhz, phaseCurrentRmsA, powerFactor, modulationIndex, cableInductanceUh,
-    capMode, supplier, series, voltageSel, leadsSel, partNumber, customCapUf, customRatedV, customEsrMohm, customIrmsA, customRthCW, customLmm, customTmm, customHmm, customPartRef,
+    capMode, supplier, series, voltageSel, leadsSel, partNumber, customCapUf, customRatedV, customEsrMohm, customEslNh, customIrmsA, customRthCW, customLmm, customTmm, customHmm, customPartRef,
     ambientTempC, coolingMethod, conductionRthCW, columns, spacingMm,
-    optimizeEnabled, maxWidthMm, maxDepthMm, maxHeightMm, optMaxHotSpotC, optObjective]);
+    optimizeEnabled, maxWidthMm, maxDepthMm, maxHeightMm, optMaxHotSpotC, optObjective,
+    loopMode, loopInductanceNh, busbarLenMm, busbarWidthMm, busbarSepMm, moduleEslNh, didtMode, switchedCurrentA, fallTimeNs, didtDirectAPerUs]);
 
   const restoreInputs = useCallback((inp: Record<string, unknown>) => {
     const v = inp as Record<string, any>;
@@ -278,6 +312,9 @@ export default function DcLinkCalculator() {
     set(v.columns, setColumns); set(v.spacingMm, setSpacingMm);
     set(v.optimizeEnabled, setOptimizeEnabled); set(v.maxWidthMm, setMaxWidthMm); set(v.maxDepthMm, setMaxDepthMm);
     set(v.maxHeightMm, setMaxHeightMm); set(v.optMaxHotSpotC, setOptMaxHotSpotC); set(v.optObjective, setOptObjective);
+    set(v.loopMode, setLoopMode); set(v.loopInductanceNh, setLoopInductanceNh); set(v.busbarLenMm, setBusbarLenMm);
+    set(v.busbarWidthMm, setBusbarWidthMm); set(v.busbarSepMm, setBusbarSepMm); set(v.moduleEslNh, setModuleEslNh);
+    set(v.didtMode, setDidtMode); set(v.switchedCurrentA, setSwitchedCurrentA); set(v.fallTimeNs, setFallTimeNs); set(v.didtDirectAPerUs, setDidtDirectAPerUs);
   }, []);
 
   const saved = useSavedCalculations('dc-link');
@@ -325,8 +362,14 @@ export default function DcLinkCalculator() {
         });
       }
     }
+    steps.push({
+      title: 'Switching overshoot',
+      formula: 'ΔV = L_loop·di/dt (device),  cap-terminal spike = ESL_bank·di/dt',
+      substitution: `L_loop = ${fmt(loopInductanceTotalNh, 1)} nH, ESL_bank = ${fmt(bankEslNh, 1)} nH, di/dt = ${fmt(diDtAPerUs, 0)} A/µs`,
+      result: `Device peak ${fmt(overshoot.devicePeakV, 0)} V (bus + ${fmt(overshoot.overshootDeviceV, 0)} V); cap-terminal peak ${fmt(overshoot.capPeakTransientV, 0)} V`,
+    });
     return steps;
-  }, [phaseCurrentRmsA, modulationIndex, powerFactor, sizing, switchingFreqKhz, rippleVoltagePkPkV, cableInductanceUh, bank, cap, coolingMethod, ambientTempC, life, busVoltageV]);
+  }, [phaseCurrentRmsA, modulationIndex, powerFactor, sizing, switchingFreqKhz, rippleVoltagePkPkV, cableInductanceUh, bank, cap, coolingMethod, ambientTempC, life, busVoltageV, loopInductanceTotalNh, bankEslNh, diDtAPerUs, overshoot]);
 
   const inputSections: ReportSection[] = useMemo(() => {
     const sys: ReportRow[] = [
@@ -569,6 +612,64 @@ export default function DcLinkCalculator() {
               </div>
             )}
           </div>
+
+          <div className="card">
+            <div className="card-title">
+              <span><span className="step-num">5</span>Switching overshoot
+                <InfoTooltip>At turn-off the device current collapses at a rate di/dt; the commutation-loop inductance L_loop produces a spike ΔV = L·di/dt on top of the DC bus. The device sees the full loop spike; the capacitor sees only the part across its own ESL. L_loop can be entered directly or estimated from a laminated busbar's geometry plus the module and cap-bank ESL.</InfoTooltip>
+              </span>
+            </div>
+            <div className="field">
+              <label>Loop inductance</label>
+              <div className="segmented">
+                <button className={loopMode === 'direct' ? 'active' : ''} onClick={() => setLoopMode('direct')}>Enter total</button>
+                <button className={loopMode === 'geometry' ? 'active' : ''} onClick={() => setLoopMode('geometry')}>From busbar</button>
+              </div>
+            </div>
+            {loopMode === 'direct' ? (
+              <div className="field">
+                <label>Commutation-loop inductance (nH)</label>
+                {seriesNum(loopInductanceNh, setLoopInductanceNh, { step: 1, min: 0 })}
+                <span className="hint">Busbar + module + cap-bank ESL. Well-laminated EV inverter loops are ~10–30 nH.</span>
+              </div>
+            ) : (
+              <div className="grid grid-2">
+                <div className="field"><label>Busbar length ({lenUnit})</label><input autoComplete="off" type="number" min={0} value={toDisplay(busbarLenMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setBusbarLenMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} /></div>
+                <div className="field"><label>Busbar width ({lenUnit})</label><input autoComplete="off" type="number" min={0.1} value={toDisplay(busbarWidthMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setBusbarWidthMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} /></div>
+                <div className="field"><label>Plate separation ({lenUnit})</label><input autoComplete="off" type="number" min={0.01} step={0.1} value={toDisplay(busbarSepMm, unitSystem, UNIT_LENGTH)} onChange={(e) => setBusbarSepMm(fromDisplay(Number(e.target.value), unitSystem, UNIT_LENGTH))} /></div>
+                <div className="field"><label>Module stray ESL (nH)</label>{seriesNum(moduleEslNh, setModuleEslNh, { step: 1, min: 0 })}</div>
+                <div className="field" style={{ gridColumn: '1 / -1' }}>
+                  <span className="hint">Parallel-plate busbar {fmt(busbarOnlyNh, 1)} nH + module {fmt(moduleEslNh, 0)} nH + bank ESL {fmt(bankEslNh, 1)} nH = {fmt(loopInductanceTotalNh, 1)} nH total.</span>
+                </div>
+              </div>
+            )}
+            <div className="field" style={{ marginTop: '0.6rem' }}>
+              <label>Current slew di/dt</label>
+              <div className="segmented">
+                <button className={didtMode === 'derived' ? 'active' : ''} onClick={() => setDidtMode('derived')}>From current &amp; fall time</button>
+                <button className={didtMode === 'direct' ? 'active' : ''} onClick={() => setDidtMode('direct')}>Direct</button>
+              </div>
+            </div>
+            {didtMode === 'derived' ? (
+              <div className="grid grid-2">
+                <div className="field">
+                  <label>Switched current (A)</label>
+                  {seriesNum(switchedCurrentA, setSwitchedCurrentA, { step: 10, min: 0 })}
+                  <span className="hint">Peak phase ≈ {fmt(Math.SQRT2 * phaseCurrentRmsA, 0)} A.</span>
+                </div>
+                <div className="field">
+                  <label>Current fall time (ns)</label>
+                  {seriesNum(fallTimeNs, setFallTimeNs, { step: 5, min: 1 })}
+                  <span className="hint">SiC ~20–50 ns, IGBT ~100–300 ns.</span>
+                </div>
+              </div>
+            ) : (
+              <div className="field">
+                <label>di/dt (A/µs)</label>
+                {seriesNum(didtDirectAPerUs, setDidtDirectAPerUs, { step: 500, min: 0 })}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* RIGHT — results */}
@@ -696,6 +797,28 @@ export default function DcLinkCalculator() {
               </table>
             </div>
           )}
+
+          <div className="card">
+            <div className="card-title">
+              <span>Switching overshoot
+                <InfoTooltip>ΔV = L_loop·di/dt. The device sees the full loop spike (compare against your switch's voltage rating); the capacitor sees only ESL_bank·di/dt on top of the DC bus and ripple. This repeats every cycle, so the cap-terminal peak must stay within the rating.</InfoTooltip>
+              </span>
+            </div>
+            <table className="data-table">
+              <tbody>
+                <tr><td>di/dt</td><td>{fmt(diDtAPerUs, 0)} A/µs ({fmt(diDtAPerUs / 1000, 1)} kA/µs)</td></tr>
+                <tr><td>Commutation-loop inductance</td><td>{fmt(loopInductanceTotalNh, 1)} nH{loopMode === 'geometry' ? ' (busbar + module + bank)' : ''}</td></tr>
+                <tr><td>Device-side overshoot ΔV</td><td>{fmt(overshoot.overshootDeviceV, 0)} V → peak {fmt(overshoot.devicePeakV, 0)} V <span className="hint">(vs your switch rating)</span></td></tr>
+                <tr>
+                  <td>Cap-terminal peak (repetitive)</td>
+                  <td className={cap && overshoot.capPeakTransientV > cap.ratedVoltageVdc ? 'fail' : cap && overshoot.capPeakTransientV > 0.9 * cap.ratedVoltageVdc ? undefined : 'pass'}>
+                    {fmt(overshoot.capPeakTransientV, 0)} V <span className="hint">= bus + ½ ripple + {fmt(overshoot.capTerminalSpikeV, 0)} V ESL spike{cap ? ` · rating ${fmt(cap.ratedVoltageVdc, 0)} V` : ''}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <span className="hint">The device-side overshoot sizes the switch/module voltage margin (out of scope here); the cap only sees the ESL·di/dt part. Minimise L_loop with a low-inductance laminated busbar and place the caps close to the switches.</span>
+          </div>
         </div>
       </div>
 
@@ -715,7 +838,13 @@ export default function DcLinkCalculator() {
           the box envelope volume at an effective packaged density of 1.35 g/cm³ (film + resin + box + terminals) —
           an approximation; use the datasheet weight for precise figures. Bank ESR and ESL are the N-in-parallel
           combinations of the per-part values; real bank ESL is dominated by the busbar/interconnect layout, which is
-          not included. {' '}
+          not included. Switching overshoot uses ΔV = L_loop·di/dt: the commutation-loop inductance (entered, or
+          estimated from a laminated busbar as µ₀·separation·length/width plus the module and cap-bank ESL) times the
+          turn-off current slew (from the commutated current and fall time, or entered directly). The device sees the
+          full loop spike (compare against the switch's rating — out of scope here); the capacitor sees only the
+          ESL_bank·di/dt portion added to the DC bus and ripple, and because it repeats every cycle it must stay within
+          the rated voltage. This is a first-order lumped estimate — real overshoot also depends on damping, gate
+          drive and ringing. {' '}
           The DC-link RMS ripple current uses the Kolar &amp; Round closed-form expression (IEE Proc. Electr. Power
           Appl., 2006, Eq. 28) for a three-phase voltage-source PWM inverter with sinusoidal output current and a
           constant DC-link voltage; it peaks near modulation index M ≈ 0.6 at roughly 0.6–0.65 × the RMS phase current.
