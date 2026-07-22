@@ -106,23 +106,25 @@ export default function TimeSeriesChart({ timeS, currentA, series, ambientC, max
   const tooltipX = hover ? Math.min(Math.max(hover.x + 10, MARGIN.left), W - MARGIN.right - tooltipW) : 0;
   const tooltipY = MARGIN.top + 6;
 
-  // Worst point across the whole profile — hottest temperature reached by any
-  // node, at any time — always annotated on the chart (not just on hover).
-  let peakIdx = 0;
-  let peakTempC = -Infinity;
-  let peakLabel = series[0]?.label ?? '';
-  series.forEach(s => {
-    s.values.forEach((v, i) => {
-      if (v > peakTempC) { peakTempC = v; peakIdx = i; peakLabel = s.label; }
-    });
-  });
-  const hasPeak = series.length > 0 && isFinite(peakTempC);
-  const peakX = hasPeak ? xs[peakIdx] : 0;
-  const peakY = hasPeak ? yTempScale(peakTempC) : 0;
-  const peakCurrentY = hasPeak ? yCurrentScale(currentA[peakIdx]) : 0;
-  const peakLabelW = 168;
-  const peakLabelX = hasPeak ? Math.min(Math.max(peakX - peakLabelW / 2, MARGIN.left), W - MARGIN.right - peakLabelW) : 0;
-  const peakLabelY = hasPeak ? Math.max(peakY - 40, MARGIN.top + 2) : 0;
+  // Worst point across the whole profile — hottest temperature reached by any node.
+  const peakTempC = series.length > 0 ? Math.max(...series.flatMap(s => s.values)) : null;
+
+  // Reference lines (ambient / limit / peak), each a dotted horizontal line at
+  // its true temperature with a "name value" label at the right edge. Labels
+  // are decluttered (pushed apart vertically) when two reference temps land
+  // close together — e.g. a design that just clears its limit puts "Peak" and
+  // "limit" right on top of each other — without moving the actual lines.
+  const refLines = [
+    { key: 'ambient', color: 'var(--text-faint)', dash: '3,3', text: `ambient ${fmt1(ambientC)}°C`, lineY: yTempScale(ambientC) },
+    { key: 'limit', color: 'var(--neg)', dash: '3,3', text: `limit ${fmt1(maxTempC)}°C`, lineY: yTempScale(maxTempC) },
+    ...(peakTempC !== null ? [{ key: 'peak', color: 'var(--warn)', dash: '5,3', text: `Peak ${fmt1(peakTempC)}°C`, lineY: yTempScale(peakTempC) }] : []),
+  ];
+  const refLabels = refLines
+    .map(r => ({ ...r, labelY: r.lineY + 3 }))
+    .sort((a, b) => a.labelY - b.labelY);
+  for (let i = 1; i < refLabels.length; i++) {
+    if (refLabels[i].labelY - refLabels[i - 1].labelY < 12) refLabels[i].labelY = refLabels[i - 1].labelY + 12;
+  }
 
   return (
     <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" style={{ maxHeight: 420 }}>
@@ -131,11 +133,13 @@ export default function TimeSeriesChart({ timeS, currentA, series, ambientC, max
         <line key={`grid-${i}`} x1={MARGIN.left} x2={W - MARGIN.right} y1={yTempScale(t)} y2={yTempScale(t)} stroke="var(--border-subtle)" strokeWidth={1} />
       ))}
 
-      {/* ambient + max temp reference lines */}
-      <line x1={MARGIN.left} x2={W - MARGIN.right} y1={yTempScale(ambientC)} y2={yTempScale(ambientC)} stroke="var(--text-faint)" strokeDasharray="3,3" strokeWidth={1} />
-      <text x={W - MARGIN.right + 4} y={yTempScale(ambientC) + 3} fontSize="9.5" fill="var(--text-faint)" fontFamily="ui-monospace, monospace">ambient</text>
-      <line x1={MARGIN.left} x2={W - MARGIN.right} y1={yTempScale(maxTempC)} y2={yTempScale(maxTempC)} stroke="var(--neg)" strokeDasharray="3,3" strokeWidth={1} />
-      <text x={W - MARGIN.right + 4} y={yTempScale(maxTempC) + 3} fontSize="9.5" fill="var(--neg)" fontFamily="ui-monospace, monospace">limit</text>
+      {/* ambient / limit / peak reference lines */}
+      {refLines.map(r => (
+        <line key={`refline-${r.key}`} x1={MARGIN.left} x2={W - MARGIN.right} y1={r.lineY} y2={r.lineY} stroke={r.color} strokeDasharray={r.dash} strokeWidth={1} />
+      ))}
+      {refLabels.map(r => (
+        <text key={`reflabel-${r.key}`} x={W - MARGIN.right + 4} y={r.labelY} fontSize="9.5" fontWeight={r.key === 'peak' ? 700 : 400} fill={r.color} fontFamily="ui-monospace, monospace">{r.text}</text>
+      ))}
 
       {/* current trace (left axis) */}
       <path d={pathFor(xs, currentYs)} fill="none" stroke="var(--blue)" strokeWidth={1.75} opacity={0.85} />
@@ -175,22 +179,6 @@ export default function TimeSeriesChart({ timeS, currentA, series, ambientC, max
       <text x={(MARGIN.left + W - MARGIN.right) / 2} y={H - 8} textAnchor="middle" fontSize="10" fill="var(--text-faint)" fontFamily="ui-monospace, monospace">
         time (s)
       </text>
-
-      {/* peak-temperature marker — always shown, independent of hover */}
-      {hasPeak && (
-        <g pointerEvents="none">
-          <line x1={peakX} x2={peakX} y1={MARGIN.top} y2={H - MARGIN.bottom} stroke="var(--warn)" strokeWidth={1} strokeDasharray="4,2" opacity={0.6} />
-          <circle cx={peakX} cy={peakCurrentY} r={4.5} fill="none" stroke="var(--blue)" strokeWidth={2} />
-          <circle cx={peakX} cy={peakY} r={4.5} fill="none" stroke="var(--warn)" strokeWidth={2} />
-          <rect x={peakLabelX} y={peakLabelY} width={peakLabelW} height={34} rx={5} fill="var(--bg-raised)" stroke="var(--warn)" strokeWidth={1} />
-          <text x={peakLabelX + 8} y={peakLabelY + 14} fontSize="10.5" fontWeight={700} fill="var(--warn)" fontFamily="ui-monospace, monospace">
-            Peak {fmt1(peakTempC)}°C &middot; {truncate(peakLabel, 12)}
-          </text>
-          <text x={peakLabelX + 8} y={peakLabelY + 28} fontSize="10" fill="var(--text-2)" fontFamily="ui-monospace, monospace">
-            t={fmt1(timeS[peakIdx])}s, I={fmt1(currentA[peakIdx])}A
-          </text>
-        </g>
-      )}
 
       {/* hover guide + markers + tooltip */}
       {hover && (
