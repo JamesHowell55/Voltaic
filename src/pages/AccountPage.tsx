@@ -177,6 +177,7 @@ const CALCULATOR_META: Record<string, { label: string; path: string }> = {
   'harness-designer': { label: 'Harness Designer', path: '/harness-designer' },
   'o-ring': { label: 'O-Ring Seal Calculator', path: '/o-ring' },
   'fits-and-limits': { label: 'Fits & Limits Calculator', path: '/fits-and-limits' },
+  'mohrs-circle': { label: "Mohr's Circle Stresses", path: '/mohrs-circle' },
   'dq-current': { label: 'Id / Iq Current Vector', path: '/id-iq-current' },
   'dc-link': { label: 'DC-Link Capacitor Sizing', path: '/dc-link' },
 };

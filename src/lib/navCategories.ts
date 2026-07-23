@@ -64,6 +64,7 @@ export const NAV_CATEGORIES: NavCategory[] = [
       { label: 'BoM Compare', path: '/bom-compare', available: true, description: 'Paste a previous and a new bill of materials straight from Excel and get a part-by-part comparison — added, removed, and up-revisioned parts highlighted automatically, with configurable columns.' },
       { label: 'O-Ring Seal', path: '/o-ring', available: true, description: 'O-Ring gland design to the Trelleborg design guide — static/dynamic radial (rod and piston), axial face, and non-circular face grooves via neutral-axis length, with ISO 286 fits or custom tolerances, AS568 / ISO 3601-1 Class A/B size selection, material guidance, and squeeze/stretch/fill/extrusion checks.' },
       { label: 'Fits & Limits', path: '/fits-and-limits', available: true, description: 'Interference (press/shrink) fit design for a solid or hollow shaft pressed into a hub — ISO 286 fits or custom tolerances, standard or custom shaft/hub materials, and insertion force plus Lamé thick-cylinder hub/shaft stresses across assembly, operational and storage temperatures.' },
+      { label: "Mohr's Circle Stresses", path: '/mohrs-circle', available: true, description: "Plane-stress transformation and Mohr's circle for a 2-D stress state (σx, σy, τxy) — principal (max/min) stresses and their orientation, maximum in-plane and absolute shear, the stresses on any rotated plane, von Mises and Tresca equivalents, and a to-scale Mohr's circle with a stress-element schematic." },
     ],
   },
 ];

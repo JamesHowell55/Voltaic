@@ -16,6 +16,7 @@ import BundleDiameterCalculator from './pages/BundleDiameterCalculator';
 import HarnessDesigner from './pages/HarnessDesigner';
 import ORingCalculator from './pages/ORingCalculator';
 import FitsAndLimitsCalculator from './pages/FitsAndLimitsCalculator';
+import MohrsCircleCalculator from './pages/MohrsCircleCalculator';
 import DqCurrentCalculator from './pages/DqCurrentCalculator';
 import DcLinkCalculator from './pages/DcLinkCalculator';
 import SkinDepthCalculator from './pages/SkinDepthCalculator';
@@ -57,6 +58,7 @@ function App() {
               <Route path="/beam-bending" element={<BeamCalculator />} />
               <Route path="/o-ring" element={<ORingCalculator />} />
               <Route path="/fits-and-limits" element={<FitsAndLimitsCalculator />} />
+              <Route path="/mohrs-circle" element={<MohrsCircleCalculator />} />
               <Route path="/cable-sizing" element={<CableWireSizingCalculator />} />
               <Route path="/battery-pack-series-parallel" element={<BatteryPackSeriesParallelCalculator />} />
               <Route path="/speed-torque-power" element={<MotorTorquePowerSpeedCalculator />} />
